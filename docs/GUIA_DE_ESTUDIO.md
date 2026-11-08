@@ -31,6 +31,21 @@ Cada término se define la primera vez que aparece, en una frase.
 | `.data` | Variables globales con valor inicial distinto de cero; viven en RAM y su valor inicial se guarda en FLASH. |
 | `.bss` | Variables globales sin valor inicial (valen 0); viven en RAM y no ocupan FLASH. |
 | Pila (stack) | Zona de RAM para variables locales y direcciones de retorno; crece hacia direcciones más bajas desde el final de la RAM. |
+| Struct de registros | `struct` cuyos campos son los registros de un periférico, en el mismo orden y con el mismo espaciado que en la memoria; con un puntero a la dirección base se escribe `GPIOA->ODR`. |
+| Desplazamiento (offset) | Distancia en bytes desde la dirección base de un periférico hasta uno de sus registros (por ejemplo `ODR` está en `+0x14`). |
+| `volatile` | Palabra de C que le dice al compilador que el valor puede cambiar por fuera del programa (un pin, un periférico) y que cada lectura o escritura debe hacerse de verdad. |
+| `MODER` | Registro de modo de un puerto GPIO: 2 bits por pin (00 entrada, 01 salida, 10 función alterna, 11 analógico). |
+| `OSPEEDR` | Registro de velocidad de cambio de la salida de cada pin: 2 bits por pin. |
+| `PUPDR` | Registro de resistencia interna de cada pin: 2 bits por pin (00 ninguna, 01 pull-up, 10 pull-down). |
+| `IDR` | Registro de lectura: un bit por pin con el estado real del pin. |
+| `ODR` | Registro de salida: un bit por pin con el valor que se saca. |
+| `AFRL` y `AFRH` | Registros de función alterna: 4 bits por pin (pines 0 a 7 en `AFRL`, 8 a 15 en `AFRH`). |
+| `RCC_AHB1ENR` | Registro del RCC que enciende el reloj de los puertos GPIO; sin reloj, el puerto no responde. |
+| Máscara | Número con unos solo en los bits que se quieren tocar; con `&` y `~` se borran y con `|` se ponen. |
+| Pull-up interno | Resistencia dentro del microcontrolador que lleva el pin a 1 cuando nadie lo baja. |
+| Activo en bajo | Señal que significa «activada» cuando vale 0; el botón azul da 0 al presionarlo. |
+| Lectura-modificación-escritura | Leer un registro, cambiar unos bits y escribirlo de vuelta; no se puede interrumpir a la mitad de forma segura (por eso en el paso 4 se explicará `BSRR`). |
+| Errata | Defecto conocido del chip publicado por el fabricante, con su forma de evitarlo. |
 | Símbolo del linker | Nombre al que el linker le asigna una dirección (por ejemplo `_estack`) para que `crt0.S` lo use. |
 | `Reset_Handler` | Código que corre al encender o reiniciar: prepara la pila, copia `.data`, borra `.bss` y llama a `main`. |
 | Tabla de vectores | Arreglo de direcciones al inicio de la FLASH: la primera es el valor inicial de SP y las siguientes son los manejadores de reset, de fallas y de cada interrupción. |
@@ -110,7 +125,7 @@ Ninguno todavía. Este paso es solo de organización.
 
 ## Paso 1 — Compilar y grabar (linker, Makefile, crt0.S)
 
-Este paso se hace en cuatro piezas, una a una: Makefile, linker script, `crt0.S` y programación de la placa con el LED y el botón. Aquí están documentadas la **pieza 1 (Makefile)**, la **pieza 2 (linker script)** y la **pieza 3 (`crt0.S`)**. Las otras piezas se agregan a esta sección cuando se hagan.
+Este paso se hace en cuatro piezas, una a una: Makefile, linker script, `crt0.S` y programación de la placa con el LED y el botón. Aquí están documentadas la **pieza 1 (Makefile)**, la **pieza 2 (linker script)** y la **pieza 3 (`crt0.S`)** y la **pieza 4 (registros, GPIO y LED con botón)**. Las otras piezas se agregan a esta sección cuando se hagan.
 
 ### Objetivo
 Tener un Makefile propio, lo más simple posible, que compile el proyecto con `arm-none-eabi-gcc` para el Cortex-M4 y grabe la placa con `openocd`.
@@ -119,6 +134,7 @@ Tener un Makefile propio, lo más simple posible, que compile el proyecto con `a
 - `Makefile` (pieza 1).
 - `linker_script.ld` (pieza 2).
 - `crt0.S` (pieza 3).
+- `inc/registros_f446.h`, `inc/gpio_config.h`, `src/gpio_config.c` y `main.c` (pieza 4).
 
 ### Concepto de clase que se usa
 El Makefile viene del ejemplo `5-ARM-Boards/NUCLEO-64/24-ADC-1` del profesor (repo `Comp-Arch-Emb-Sys`). La grabación es la misma del ejemplo `1-led-blink`, que usamos primero como prueba del entorno (WSL2, usbipd, openocd).
@@ -996,6 +1012,367 @@ Fuera del repo, con el `Makefile`, el `linker_script.ld` y el `crt0.S` del repo,
    Porque era la del F401 y en la F446 varias posiciones «reservadas» son IRQ reales; sin corregirla, las IRQ posteriores quedarían desplazadas.
 6. ¿Qué dirección ocupa la IRQ número `n` en la tabla?
    `0x40 + 4 × n`; por ejemplo, TIM3 (IRQ 29) está en `0xB4`.
+
+### Pieza 4 — Registros, `gpio_config` y LED con botón
+
+**Objetivo de la pieza:** definir a mano los registros que se necesitan (RCC, GPIOA y GPIOC), escribir las funciones de `gpio_config` (adaptadas del profesor) y un `main.c` que enciende el LED PA5 mientras se mantiene presionado el botón azul PC13. Con esto se prueba todo lo anterior en la placa con `make flash`.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones; el subagente `programador` (Haiku) escribió los cuatro archivos; el subagente `revisor` (Sonnet) los revisó y no cambió nada; el agente principal agregó `(void)lectura_descartada;` por decisión de Daniela, recompiló y grabó la placa.
+
+**Origen:** `gpio_config.c/.h` del ejemplo `24-ADC-1` y `stm32f401.h` del ejemplo `4-custom-hal` del profesor (struct de registros), `main.c` del ejemplo `3-input-butt` (con la lógica del botón invertida, ver abajo). Datos del RM0390: direcciones base, sección 2.2.2, tabla 1 (leída literal en una transcripción en línea, docs.dirba.io); desplazamientos de GPIO, sección 7.4, tabla 26, y bits de `RCC_AHB1ENR`, sección 6.3.10 (solo de un resumen de la transcripción, coinciden con los ejemplos del profesor). **Antes de sustentar conviene comprobar estas tablas en el PDF de ST.**
+
+#### Código explicado
+
+`inc/registros_f446.h`
+
+```c
+#ifndef REGISTROS_F446_H
+#define REGISTROS_F446_H
+
+#include <stdint.h>
+
+// Direcciones base de los buses. Fuente: RM0390 (manual de referencia STM32F446),
+// sección 2.2.2, tabla 1 «STM32F446xx register boundary addresses».
+#define PERIFERICOS_BASE (0x40000000U)
+// Bus AHB1: aquí están los puertos GPIO y el RCC.
+#define AHB1_BASE (PERIFERICOS_BASE + 0x20000U)
+
+// Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
+// Puerto A de GPIO (0x40020000).
+#define GPIOA_BASE (AHB1_BASE)
+// Puerto C de GPIO (0x40020800).
+#define GPIOC_BASE (AHB1_BASE + 0x800U)
+// Controlador de reloj RCC (0x40023800).
+#define RCC_BASE (AHB1_BASE + 0x3800U)
+
+// Mapa de los registros del puerto: cada campo está 4 bytes después del anterior,
+// por eso el orden no se puede cambiar. Fuente: RM0390, capítulo 7, sección 7.4, tabla 26.
+typedef struct {
+    // Desplazamiento 0x00. Modo de cada pin: 2 bits por pin (00 entrada, 01 salida, 10 alterna, 11 analógico).
+    volatile uint32_t MODER;
+    // Desplazamiento 0x04. Tipo de salida de cada pin: 1 bit por pin (0 push-pull, 1 open-drain).
+    volatile uint32_t OTYPER;
+    // Desplazamiento 0x08. Velocidad de cambio de cada pin: 2 bits por pin.
+    volatile uint32_t OSPEEDR;
+    // Desplazamiento 0x0C. Resistencia pull-up o pull-down de cada pin: 2 bits por pin.
+    volatile uint32_t PUPDR;
+    // Desplazamiento 0x10. Lectura del estado de los pines de entrada: 1 bit por pin.
+    volatile uint32_t IDR;
+    // Desplazamiento 0x14. Valor que se saca por cada pin de salida: 1 bit por pin.
+    volatile uint32_t ODR;
+    // Desplazamiento 0x18. Pone (bits 0 a 15) o borra (bits 16 a 31) bits de ODR de forma atómica.
+    volatile uint32_t BSRR;
+    // Desplazamiento 0x1C. Bloquea la configuración de los pines hasta el próximo reinicio.
+    volatile uint32_t LCKR;
+    // Desplazamiento 0x20. Función alterna de los pines 0 a 7: 4 bits por pin.
+    volatile uint32_t AFRL;
+    // Desplazamiento 0x24. Función alterna de los pines 8 a 15: 4 bits por pin.
+    volatile uint32_t AFRH;
+} RegistrosGPIO;
+
+// Mapa de los registros del RCC (reloj). Cada campo está en su desplazamiento del manual.
+// Fuente: RM0390, capítulo 6, sección 6.3, «RCC registers», mapa de registros.
+typedef struct {
+    // Desplazamiento 0x00. Control del reloj (HSI, HSE, PLL). No se usa todavía (paso 2).
+    volatile uint32_t CR;
+    // Desplazamiento 0x04. Configuración del PLL. No se usa todavía (paso 2).
+    volatile uint32_t PLLCFGR;
+    // Desplazamiento 0x08. Configuración del reloj del sistema y de los buses. No se usa todavía (paso 2).
+    volatile uint32_t CFGR;
+    // Desplazamiento 0x0C. Interrupciones del reloj. No se usa todavía (paso 2).
+    volatile uint32_t CIR;
+    // Desplazamiento 0x10. Reinicia los puertos AHB1. No se usa todavía (paso 2).
+    volatile uint32_t AHB1RSTR;
+    // Desplazamiento 0x14. Reinicia los periféricos AHB2. No se usa todavía (paso 2).
+    volatile uint32_t AHB2RSTR;
+    // Desplazamiento 0x18. Reinicia los periféricos AHB3. No se usa todavía (paso 2).
+    volatile uint32_t AHB3RSTR;
+    // Desplazamiento 0x1C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_0;
+    // Desplazamiento 0x20. Reinicia los periféricos del bus APB1. No se usa todavía (paso 2).
+    volatile uint32_t APB1RSTR;
+    // Desplazamiento 0x24. Reinicia los periféricos del bus APB2. No se usa todavía (paso 2).
+    volatile uint32_t APB2RSTR;
+    // Desplazamientos 0x28 y 0x2C. Reservados por el fabricante, no se usan.
+    uint32_t RESERVADO_1[2];
+    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 2 = puerto C).
+    volatile uint32_t AHB1ENR;
+} RegistrosRCC;
+
+// Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
+// Cada puntero apunta a la dirección base del periférico.
+#define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
+// Puntero al puerto C de GPIO (botón azul PC13).
+#define GPIOC ((RegistrosGPIO *)GPIOC_BASE)
+// Puntero al controlador de reloj RCC.
+#define RCC ((RegistrosRCC *)RCC_BASE)
+
+// Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOAEN (1U << 0)
+// Bit 2 de RCC_AHB1ENR: 1 enciende el reloj del puerto C. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOCEN (1U << 2)
+
+#endif
+```
+
+- `#include <stdint.h>`: trae `uint32_t`, un entero sin signo de 32 bits, el tamaño de cada registro.
+- `PERIFERICOS_BASE` y `AHB1_BASE`: los periféricos empiezan en `0x40000000`; el bus AHB1 (donde están los puertos GPIO y el RCC) en `+0x20000`.
+- `GPIOA_BASE`, `GPIOC_BASE` y `RCC_BASE`: `0x40020000`, `0x40020800` y `0x40023800`.
+- **`RegistrosGPIO` es el mapa de los registros del puerto: cada campo está 4 bytes después del anterior**, por eso el orden no se puede cambiar. Si el puntero apunta a `0x40020000`, `puerto->ODR` es la dirección `0x40020014`: el compilador suma el desplazamiento del campo. Cada campo es `volatile`.
+- `RegistrosRCC`: igual, hasta `AHB1ENR` (`0x30`). `CR`, `PLLCFGR`, `CFGR`, `CIR`, `AHB1RSTR`, `AHB2RSTR`, `AHB3RSTR`, `APB1RSTR` y `APB2RSTR` no se usan todavía (paso 2); están para que `AHB1ENR` quede en su lugar. `RESERVADO_0` y `RESERVADO_1[2]` son los huecos del manual (`0x1C` y `0x28` a `0x2C`).
+- `GPIOA`, `GPIOC` y `RCC`: convierten la dirección base en un puntero al struct.
+- `RCC_AHB1ENR_GPIOAEN` (bit 0) y `RCC_AHB1ENR_GPIOCEN` (bit 2): máscaras para encender el reloj de cada puerto.
+
+`inc/gpio_config.h`
+
+```c
+#ifndef GPIO_CONFIG_H
+#define GPIO_CONFIG_H
+
+#include "registros_f446.h"
+
+// Valores para los campos de configuración de un pin.
+// Fuente: RM0390, sección 7.4, descripción de los registros GPIOx_MODER, GPIOx_PUPDR y GPIOx_OSPEEDR.
+// Modo entrada: MODER = 00.
+#define MODO_ENTRADA 0U
+// Modo salida: MODER = 01.
+#define MODO_SALIDA 1U
+// Sin pull-up ni pull-down: PUPDR = 00.
+#define RESISTENCIA_NINGUNA 0U
+// Pull-up interno: PUPDR = 01 (el pin queda en 1 si nadie lo baja).
+#define RESISTENCIA_PULL_UP 1U
+// Velocidad baja: OSPEEDR = 00.
+#define VELOCIDAD_BAJA 0U
+
+// Datos para configurar un pin de una sola vez.
+typedef struct {
+    // Modo del pin: MODO_ENTRADA o MODO_SALIDA.
+    uint32_t modo;
+    // Número del pin dentro del puerto (0 a 15).
+    uint32_t pin;
+    // Resistencia interna: RESISTENCIA_NINGUNA o RESISTENCIA_PULL_UP.
+    uint32_t resistencia;
+    // Velocidad del pin: VELOCIDAD_BAJA.
+    uint32_t velocidad;
+    // Función alterna (AF0 a AF15). Usar 0U cuando el pin no es de función alterna.
+    uint32_t funcion_alterna;
+} ConfiguracionPin;
+
+// Enciende el reloj del puerto indicado (solo puerto A o C).
+void habilitar_reloj_puerto(RegistrosGPIO *puerto);
+// Escribe en los registros del puerto la configuración de un pin.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion);
+// Devuelve 1 si el pin está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin);
+// Pone el pin en 1 si estado es distinto de 0, o en 0 si estado es 0.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado);
+// Cambia el pin de 0 a 1 o de 1 a 0.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin);
+
+#endif
+```
+
+- Las cinco constantes (`MODO_ENTRADA`, `MODO_SALIDA`, `RESISTENCIA_NINGUNA`, `RESISTENCIA_PULL_UP`, `VELOCIDAD_BAJA`) son los valores que se escriben en `MODER`, `PUPDR` y `OSPEEDR`; solo se definieron las que el paso 1 usa.
+- `ConfiguracionPin`: los cinco datos para configurar un pin con una sola llamada.
+- Los cinco prototipos son las funciones de `gpio_config.c`.
+
+`src/gpio_config.c`
+
+```c
+#include "gpio_config.h"
+
+// Enciende el reloj del puerto. Sin reloj, los registros del puerto no responden.
+void habilitar_reloj_puerto(RegistrosGPIO *puerto)
+{
+    // Si el puerto es A, se pone en 1 el bit 0 de RCC->AHB1ENR (|= no cambia los demás bits).
+    if (puerto == GPIOA) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    // Si el puerto es C, se pone en 1 el bit 2 de RCC->AHB1ENR.
+    } else if (puerto == GPIOC) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    }
+    // Variable que solo sirve para leer el registro; el valor leído no se usa.
+    volatile uint32_t lectura_descartada;
+    // Dos lecturas después de habilitar el reloj, como en el ejemplo del profesor, por una errata del chip:
+    // el periférico necesita unos ciclos antes de poder usarse (no verificado en el RM0390).
+    lectura_descartada = RCC->AHB1ENR;
+    lectura_descartada = RCC->AHB1ENR;
+    // El valor leído no se usa: (void) le dice al compilador que se descarta a propósito (evita la advertencia).
+    (void)lectura_descartada;
+}
+
+// Configura un pin: modo, velocidad, resistencia y función alterna.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion)
+{
+    // Primero se enciende el reloj del puerto para poder escribir sus registros.
+    habilitar_reloj_puerto(puerto);
+
+    // Los paréntesis en ~(...) son obligatorios. Sin ellos, ~0x3U << posición se evalúa como (~0x3U) << posición
+    // y la máscara borra también la configuración de todos los pines con número menor.
+    // Esta es la corrección al WRITE_REG_FIELD del profesor, que usaba ~MASK sin paréntesis.
+    // MODER: borra los 2 bits del pin (máscara ~(0x3U << posición)) y pone el modo nuevo en esos bits.
+    puerto->MODER = (puerto->MODER & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.modo << (configuracion.pin * 2U));
+    // OSPEEDR: borra los 2 bits de velocidad del pin y pone la velocidad nueva.
+    puerto->OSPEEDR = (puerto->OSPEEDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.velocidad << (configuracion.pin * 2U));
+    // PUPDR: borra los 2 bits de resistencia del pin y pone la resistencia nueva.
+    puerto->PUPDR = (puerto->PUPDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.resistencia << (configuracion.pin * 2U));
+
+    // Pines 0 a 7: la función alterna está en AFRL.
+    if (configuracion.pin < 8U) {
+        // AFRL: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRL = (puerto->AFRL & ~(0xFU << (configuracion.pin * 4U))) | (configuracion.funcion_alterna << (configuracion.pin * 4U));
+    // Pines 8 a 15: la función alterna está en AFRH; la posición se calcula restando 8.
+    } else {
+        // AFRH: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRH = (puerto->AFRH & ~(0xFU << ((configuracion.pin - 8U) * 4U))) | (configuracion.funcion_alterna << ((configuracion.pin - 8U) * 4U));
+    }
+}
+
+// Lee el estado de un pin de entrada. Devuelve 1 si está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // IDR tiene el estado real de cada pin. (1U << pin) crea una máscara con solo ese bit.
+    // Si el bit del pin es 1, la expresión vale distinto de 0 y se devuelve 1U; si no, se devuelve 0U.
+    return (puerto->IDR & (1U << pin)) ? 1U : 0U;
+}
+
+// Pone un pin de salida en 1 o en 0.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado)
+{
+    // Si estado es distinto de 0, se pone en 1 el bit del pin en ODR (|= deja los demás bits igual).
+    if (estado != 0U) {
+        puerto->ODR |= (1U << pin);
+    // Si estado es 0, se pone en 0 el bit del pin en ODR (&= ~ deja los demás bits igual).
+    } else {
+        puerto->ODR &= ~(1U << pin);
+    }
+}
+
+// Invierte un pin de salida: si estaba en 1 pasa a 0, y si estaba en 0 pasa a 1.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // ^= con la máscara del pin invierte solo ese bit de ODR y deja los demás igual.
+    puerto->ODR ^= (1U << pin);
+}
+```
+
+- `habilitar_reloj_puerto`: pone en 1 el bit del puerto en `RCC->AHB1ENR` con `|=` (no apaga los relojes de los otros puertos). Sin reloj, los registros del puerto no responden. Las dos lecturas descartadas vienen del ejemplo del profesor (errata del chip: el periférico necesita unos ciclos antes de poder usarse; no verificado en el RM0390). `(void)lectura_descartada;` le dice al compilador que el valor se descarta a propósito y evita la advertencia.
+- `configurar_pin`: primero habilita el reloj (sin él no se pueden escribir los registros). Después, para cada registro, dos pasos en una línea: `registro & ~(0x3U << (pin * 2U))` borra los 2 bits del pin, y `| (valor << (pin * 2U))` pone el valor nuevo en esos 2 bits. Con `AFRL` y `AFRH` es igual, pero con 4 bits por pin (máscara `0xFU`); para los pines 8 a 15 se usa `AFRH` y la posición `(pin - 8U) * 4U`.
+- **Corrección al `WRITE_REG_FIELD` del profesor.** La macro no se usa (su `POSITION_VAL` viene de CMSIS), pero el error está en las 5 líneas de arriba: los paréntesis de `~( ... )` son obligatorios. Ejemplo con el pin 5 (posición 10): sin paréntesis, `~0x3U << 10` se evalúa como `(~0x3U) << 10` y da `…1111 1100 0000 0000`; al hacer `&`, los 10 bits bajos quedan en 0 y se borra la configuración de los pines 0 a 4. Con paréntesis, `~(0x3U << 10)` da `…1111 0011 1111 1111` y solo se borran los bits 10 y 11, que son los del pin 5. En el archivo del profesor la macro aparece 11 veces (6 en el reloj, 3 en `MODER`, `OSPEEDR` y `PUPDR`, 2 en `AFRL` y `AFRH`).
+- `leer_pin`: `IDR & (1U << pin)` deja solo el bit del pin; devuelve 1 si estaba en 1 y 0 si no.
+- `escribir_pin`: con `estado != 0` pone el bit en `ODR` con `|=`; con 0 lo borra con `&= ~(1U << pin)`. Es lectura-modificación-escritura, como el profesor (el paso 4 explicará `BSRR`).
+- `invertir_pin`: `^=` con la máscara del pin invierte solo ese bit de `ODR`.
+
+`main.c`
+
+```c
+#include "registros_f446.h"
+#include "gpio_config.h"
+
+// Número del pin del LED de la placa (PA5).
+#define PIN_LED 5U
+// Número del pin del botón azul de la placa (PC13). Es activo en bajo: leer 0 significa presionado.
+#define PIN_BOTON_AZUL 13U
+
+int main(void)
+{
+    // Configuración del LED de la placa (PA5).
+    ConfiguracionPin configuracion_led;
+    // El LED es una salida.
+    configuracion_led.modo = MODO_SALIDA;
+    // Número del pin del LED.
+    configuracion_led.pin = PIN_LED;
+    // Sin pull-up ni pull-down en el LED.
+    configuracion_led.resistencia = RESISTENCIA_NINGUNA;
+    // Velocidad baja.
+    configuracion_led.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_led.funcion_alterna = 0U;
+    // Se escribe la configuración del LED en el puerto A.
+    configurar_pin(GPIOA, configuracion_led);
+
+    // Configuración del botón azul (PC13).
+    ConfiguracionPin configuracion_boton;
+    // El botón es una entrada.
+    configuracion_boton.modo = MODO_ENTRADA;
+    // Número del pin del botón.
+    configuracion_boton.pin = PIN_BOTON_AZUL;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton.funcion_alterna = 0U;
+    // Se escribe la configuración del botón en el puerto C.
+    configurar_pin(GPIOC, configuracion_boton);
+
+    while (1) {
+        // El botón es activo en bajo: leer 0 significa presionado; el LED se enciende mientras se mantiene presionado.
+        if (leer_pin(GPIOC, PIN_BOTON_AZUL) == 0U) {
+            // Botón presionado: se pone en 1 el pin PA5 y el LED enciende.
+            escribir_pin(GPIOA, PIN_LED, 1U);
+        } else {
+            // Botón suelto: se pone en 0 el pin PA5 y el LED se apaga.
+            escribir_pin(GPIOA, PIN_LED, 0U);
+        }
+    }
+}
+```
+
+- `PIN_LED` (5) es el LED PA5 y `PIN_BOTON_AZUL` (13) es el botón PC13 (`CLAUDE.md`, sección Hardware).
+- Se configura el LED como salida (sin resistencia, velocidad baja, función alterna 0), asignando cada campo de `ConfiguracionPin` en su línea, y después el botón como entrada con pull-up interno.
+- En el bucle, `leer_pin(GPIOC, PIN_BOTON_AZUL) == 0U` significa «botón presionado» (activo en bajo: el pull-up lo deja en 1 y el botón lo lleva a 0); entonces se pone PA5 en 1 y el LED enciende. Si no, se pone en 0.
+
+#### Modificaciones y correcciones (respecto al código del profesor)
+- Los registros ya no vienen de CMSIS: son los structs `RegistrosGPIO` y `RegistrosRCC` (modelo: `stm32f401.h` del ejemplo 4), con nombres en español para los tipos y los nombres del manual para los campos.
+- `WRITE_REG_FIELD` no se usa: se escribe directo en el registro con `~( ... )` con paréntesis, porque la macro dependía de `POSITION_VAL` (CMSIS) y traía el error de los paréntesis.
+- Funciones con nombres en español: `habilitar_reloj_puerto`, `configurar_pin`, `leer_pin`, `escribir_pin`, `invertir_pin`; la configuración es `ConfiguracionPin` y no `GPIO_InitTypeDef`.
+- Constantes con nombre en lugar de números sueltos.
+- `habilitar_reloj_puerto` solo maneja los puertos A y C (el profesor hace A, B, C, D, E y H); B se agrega en el paso 3.
+- El ejemplo del profesor enciende el LED cuando el botón **no** está presionado (`!= 0`); aquí se enciende mientras se presiona (`== 0`).
+- `main.c` no usa `<stdlib.h>` ni `<string.h>`.
+- Se agregó `(void)lectura_descartada;` para que el paso compile sin advertencias.
+
+#### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Cómo definir los registros | Struct de registros, `#define` con base y desplazamiento, o `#define` por puerto | Struct de registros (cambia la decisión anterior de `#define` sueltos para poder copiar las funciones del profesor) |
+| `WRITE_REG_FIELD` | No usarla (escritura directa) o redefinirla sin `POSITION_VAL` | No usarla; explicar el error de los paréntesis en el comentario |
+| Nombres | Español completo; constantes con nombre o números | Español; constantes con nombre (`#define` de un solo valor) |
+| Puertos y reloj | Solo A y C ahora; B en el paso 3 | Solo RCC, GPIOA y GPIOC; el reloj de B en el paso 3 |
+| `escribir_pin` | `ODR` con lectura-modificación-escritura o `BSRR` | Como el profesor (`ODR`); `BSRR` se explica en el paso 4 |
+| Resistencia de PC13 | Ninguna o pull-up interno | Pull-up interno |
+| Tipos | `stdint.h` o `unsigned int` | `stdint.h` y `uint32_t` |
+| Struct de RCC | Relleno `RESERVADO[12]` o los nombres del manual | Los nombres del manual hasta `AHB1ENR` |
+| Constantes | Solo las que se usan o todas | Solo las que el paso usa |
+| Nombres de los tipos | `RegistrosGPIO`, `RegistrosRCC`, `ConfiguracionPin` | Aceptados |
+| Advertencia de `lectura_descartada` | `(void)lectura_descartada;`, dejarla documentada o quitar la variable | `(void)lectura_descartada;` |
+| Una o dos lecturas | Una o dos | Dos, como el ejemplo |
+
+#### Cómo se probó
+- `make clean && make`: sin advertencias; `arm-none-eabi-size`: `text 1130`, `data 0`, `bss 2`.
+- El `revisor` comprobó con `offsetof` y `_Static_assert` que cada campo de los structs está en el desplazamiento del manual, y en el desensamblado (`objdump -d`) que se usan los desplazamientos `#0`, `#8`, `#12`, `#32` y `#36` y las direcciones `0x40020000`, `0x40023800` y `0x40020800`.
+- `make flash`: `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa: el LED PA5 se enciende mientras Daniela mantiene presionado el botón azul y se apaga al soltarlo.
+- `nm`: `g_pfnVectors = 0x08000000`, `main = 0x080001c4`, `Reset_Handler = 0x08000420`, `_sidata = 0x0800046c`, `_estack = 0x20020000`.
+
+#### Errores encontrados y cómo se resolvieron
+- La primera compilación dio una advertencia `-Wunused-but-set-variable` en `lectura_descartada` (una variable `volatile` que solo se escribe). El `revisor` comprobó que con `(void)lectura_descartada;` o con `(void)RCC->AHB1ENR;` desaparece; Daniela eligió la primera.
+- VS Code subrayaba `RegistrosGPIO` en `src/gpio_config.c` (Problems marcaba 6) aunque `make` compilaba sin advertencias y la placa funcionaba. Causa probable: IntelliSense no lee el `-Iinc` del Makefile y, con la carpeta `Microprocesadores/` abierta, puede encontrar el `gpio_config.h` del profesor. Solución: abrir directamente la carpeta del repo en una ventana nueva. Resultado confirmado por Daniela: 0 errores y 0 advertencias. No hizo falta crear `.vscode/c_cpp_properties.json`.
+
+#### Preguntas de autoevaluación
+1. ¿Por qué el orden de los campos de `RegistrosGPIO` no se puede cambiar?
+   Porque el struct es el mapa de los registros del puerto: cada campo está 4 bytes después del anterior y el compilador calcula la dirección de `puerto->ODR` sumando el desplazamiento del campo (`0x14`) a la dirección base.
+2. ¿Qué pasa si se escribe `~0x3U << posición` sin paréntesis alrededor de `0x3U << posición`?
+   Se evalúa como `(~0x3U) << posición`, la máscara queda con ceros en todos los bits por debajo de la posición y el `&` borra también la configuración de los pines con número menor.
+3. ¿Por qué el LED se enciende cuando `leer_pin(GPIOC, PIN_BOTON_AZUL) == 0`?
+   Porque el botón es activo en bajo: el pull-up deja el pin en 1 y al presionarlo el botón lo lleva a 0.
+4. ¿Por qué `configurar_pin` habilita el reloj antes de escribir los registros?
+   Porque los relojes de los puertos están apagados tras el reset y, sin reloj, los registros del puerto no responden.
+5. ¿Para qué sirve `volatile` en los campos de los registros?
+   Para que el compilador no optimice ni elimine las lecturas y escrituras: el valor puede cambiar por fuera del programa (un pin) y cada acceso debe hacerse de verdad.
+6. ¿Qué hace cada parte de `(registro & ~(0x3U << (pin * 2U))) | (valor << (pin * 2U))`?
+   El `&` con la máscara invertida borra los 2 bits del pin y deja los demás; el `|` con el valor desplazado escribe el valor nuevo en esos 2 bits.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
