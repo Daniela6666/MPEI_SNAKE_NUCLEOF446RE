@@ -32,6 +32,15 @@ Cada término se define la primera vez que aparece, en una frase.
 | `.bss` | Variables globales sin valor inicial (valen 0); viven en RAM y no ocupan FLASH. |
 | Pila (stack) | Zona de RAM para variables locales y direcciones de retorno; crece hacia direcciones más bajas desde el final de la RAM. |
 | Símbolo del linker | Nombre al que el linker le asigna una dirección (por ejemplo `_estack`) para que `crt0.S` lo use. |
+| `Reset_Handler` | Código que corre al encender o reiniciar: prepara la pila, copia `.data`, borra `.bss` y llama a `main`. |
+| Tabla de vectores | Arreglo de direcciones al inicio de la FLASH: la primera es el valor inicial de SP y las siguientes son los manejadores de reset, de fallas y de cada interrupción. |
+| IRQ | Petición de interrupción de un periférico; cada una tiene un número (0 a 96 en la F446) y una posición fija en la tabla de vectores. |
+| Manejador (handler) | Función que la CPU ejecuta cuando llega una excepción o interrupción. |
+| Símbolo débil (`.weak`) | Nombre que puede ser reemplazado: si en otro archivo se define una función con el mismo nombre, el enlazador usa esa y no la débil. |
+| `Default_Handler` | Manejador por defecto: un bucle infinito al que apuntan todas las interrupciones que no tienen manejador propio. |
+| SP, `r0` a `r4` | SP es el puntero de pila; `r0` a `r12` son registros de uso general de la CPU. |
+| Literal pool | Zona de constantes que el ensamblador deja cerca del código para `ldr rX, =valor`. |
+| Bit Thumb | Bit 0 de una dirección de función en la tabla de vectores; debe valer 1 porque el Cortex-M solo ejecuta Thumb (por eso `Reset_Handler` en `0x080001e4` aparece como `0x080001e5`). |
 
 ## Plantilla de sección de paso
 Cada paso nuevo copia esta estructura:
@@ -101,7 +110,7 @@ Ninguno todavía. Este paso es solo de organización.
 
 ## Paso 1 — Compilar y grabar (linker, Makefile, crt0.S)
 
-Este paso se hace en cuatro piezas, una a una: Makefile, linker script, `crt0.S` y programación de la placa con el LED y el botón. Aquí están documentadas la **pieza 1 (Makefile)** y la **pieza 2 (linker script)**. Las otras piezas se agregan a esta sección cuando se hagan.
+Este paso se hace en cuatro piezas, una a una: Makefile, linker script, `crt0.S` y programación de la placa con el LED y el botón. Aquí están documentadas la **pieza 1 (Makefile)**, la **pieza 2 (linker script)** y la **pieza 3 (`crt0.S`)**. Las otras piezas se agregan a esta sección cuando se hagan.
 
 ### Objetivo
 Tener un Makefile propio, lo más simple posible, que compile el proyecto con `arm-none-eabi-gcc` para el Cortex-M4 y grabe la placa con `openocd`.
@@ -109,6 +118,7 @@ Tener un Makefile propio, lo más simple posible, que compile el proyecto con `a
 ### Archivos creados o modificados
 - `Makefile` (pieza 1).
 - `linker_script.ld` (pieza 2).
+- `crt0.S` (pieza 3).
 
 ### Concepto de clase que se usa
 El Makefile viene del ejemplo `5-ARM-Boards/NUCLEO-64/24-ADC-1` del profesor (repo `Comp-Arch-Emb-Sys`). La grabación es la misma del ejemplo `1-led-blink`, que usamos primero como prueba del entorno (WSL2, usbipd, openocd).
@@ -369,6 +379,623 @@ Fuera del repo, con un `main.c` de prueba (`volatile unsigned int variable_en_da
    Si `.data` midiera 5 bytes, el bucle de `crt0.S` (de 4 en 4) copiaría 2 palabras y escribiría 3 bytes más allá de `.data`.
 5. ¿Cómo se sabe que la tabla de vectores quedó donde la espera el procesador?
    `.isr_vector` es lo primero dentro de `.text`, y `.text` es lo primero en FLASH (`0x08000000`); se confirma con `nm` (`g_pfnVectors = 0x08000000`) y con `objdump -s`.
+
+### Pieza 3 — `crt0.S` (arranque y tabla de vectores)
+
+**Objetivo de la pieza:** el código en ensamblador que corre primero. Define la tabla de vectores completa de la F446 y el `Reset_Handler`, que deja el programa listo antes de llamar a `main`.
+
+**Origen:** `startup_stm32f401xe.s` de ST, tal como lo trae el ejemplo `24-ADC-1` del profesor. La tabla de vectores se rehízo para la F446 con la **Table 38 «Vector table for STM32F446xx»** del RM0390 (capítulo 10 «Interrupts and events», sección 10.1.3), consultada en una transcripción en línea (docs.dirba.io), no en el PDF. Antes de sustentar conviene contrastarla con el PDF de ST: la página advierte que puede tener errores, y su sección 10.1.1 dice «96 maskable interrupt channels» mientras la tabla va de la IRQ 0 a la 96 (97 posiciones).
+
+#### Código explicado
+
+```asm
+/* adaptado de startup_stm32f401xe.s (ST) y del ejemplo 24-ADC-1 del profesor */
+/**
+  ******************************************************************************
+  * @file      startup_stm32f401xe.s
+  * @author    MCD Application Team
+  * @brief     STM32F401xExx Devices vector table for GCC based toolchains. 
+  *            This module performs:
+  *                - Set the initial SP
+  *                - Set the initial PC == Reset_Handler,
+  *                - Set the vector table entries with the exceptions ISR address
+  *                - Branches to main in the C library (which eventually
+  *                  calls main()).
+  *            After Reset the Cortex-M4 processor is in Thread mode,
+  *            priority is Privileged, and the Stack is set to Main.
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2017 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+
+  .syntax unified   /* sintaxis unificada de ARM (la misma para ARM y Thumb) */
+  .cpu cortex-m4    /* instrucciones del Cortex-M4 */
+  .fpu softvfp      /* sin FPU: coincide con -mfloat-abi=soft del Makefile */
+  .thumb            /* el codigo es Thumb (los Cortex-M solo ejecutan Thumb) */
+
+.global  g_pfnVectors    /* la tabla de vectores es visible para el linker */
+.global  Default_Handler /* manejador por defecto */
+.global  Reset_Handler   /* manejador de reset: ENTRY del linker script */
+
+/**
+ * Reset_Handler: es lo primero que se ejecuta despues de un reset.
+ * Prepara la pila, copia .data de FLASH a RAM, pone .bss en cero
+ * y llama a main().
+*/
+    .section  .text.Reset_Handler
+  .type  Reset_Handler, %function
+Reset_Handler:
+  /* Pila: SP = _estack (final de la RAM, 0x20020000; la pila crece hacia abajo) */
+  ldr   sp, =_estack
+
+  /* Copiar el valor inicial de .data desde la FLASH (_sidata) hasta la RAM (_sdata a _edata) */
+  ldr r0, =_sdata               /* r0 = direccion de inicio de .data en RAM */
+  ldr r1, =_edata               /* r1 = direccion de fin de .data en RAM */
+  ldr r2, =_sidata              /* r2 = direccion del valor inicial en FLASH */
+  movs r3, #0                   /* r3 = desplazamiento en bytes, empieza en 0 */
+  b LoopCopyDataInit            /* saltar a la condicion del bucle */
+
+CopyDataInit:
+  ldr r4, [r2, r3]              /* leer una palabra (4 bytes) de la FLASH */
+  str r4, [r0, r3]              /* escribirla en la RAM */
+  adds r3, r3, #4               /* avanzar 4 bytes */
+
+LoopCopyDataInit:
+  adds r4, r0, r3               /* r4 = direccion actual en RAM */
+  cmp r4, r1                    /* comparar con el fin de .data */
+  bcc CopyDataInit              /* si todavia es menor, seguir copiando */
+
+  /* Poner en cero .bss (de _sbss a _ebss), porque en C las globales sin valor inicial valen 0 */
+  ldr r2, =_sbss                /* r2 = direccion de inicio de .bss */
+  ldr r4, =_ebss                /* r4 = direccion de fin de .bss */
+  movs r3, #0                   /* r3 = valor cero */
+  b LoopFillZerobss             /* saltar a la condicion del bucle */
+
+FillZerobss:
+  str  r3, [r2]                 /* escribir un cero (4 bytes) */
+  adds r2, r2, #4               /* avanzar 4 bytes */
+
+LoopFillZerobss:
+  cmp r2, r4                    /* comparar con el fin de .bss */
+  bcc FillZerobss               /* si todavia es menor, seguir borrando */
+
+  /* Llamar a main() */
+  bl  main
+
+  /* Si main retorna, quedarse en un bucle infinito */
+  b .
+  .size  Reset_Handler, .-Reset_Handler
+
+/**
+ * Default_Handler: se ejecuta si llega una interrupcion que no tiene manejador.
+ * Entra en un bucle infinito para poder examinar el sistema con el depurador.
+*/
+    .section  .text.Default_Handler,"ax",%progbits
+Default_Handler:
+Infinite_Loop:
+  b  Infinite_Loop
+  .size  Default_Handler, .-Default_Handler
+
+/**
+ * Tabla de vectores del STM32F446 (RM0390, seccion 10.1.3, tabla 38).
+ * El linker la deja al inicio de la FLASH (0x08000000), que es donde el procesador la busca.
+ * Cada entrada es una palabra de 4 bytes con la direccion del manejador (0 = reservado).
+*/
+   .section  .isr_vector,"a",%progbits
+  .type  g_pfnVectors, %object
+
+g_pfnVectors:
+  .word  _estack                          /* 0x00: valor inicial del puntero de pila (SP) */
+  .word  Reset_Handler                    /* 0x04: Reset */
+  .word  NMI_Handler                      /* 0x08: NMI (interrupcion no enmascarable) */
+  .word  HardFault_Handler                /* 0x0C: HardFault (todas las clases de falla) */
+  .word  MemManage_Handler                /* 0x10: MemManage (gestion de memoria) */
+  .word  BusFault_Handler                 /* 0x14: BusFault (falla de bus) */
+  .word  UsageFault_Handler               /* 0x18: UsageFault (instruccion indefinida o estado ilegal) */
+  .word  0                                /* 0x1C: reservado */
+  .word  0                                /* 0x20: reservado */
+  .word  0                                /* 0x24: reservado */
+  .word  0                                /* 0x28: reservado */
+  .word  SVC_Handler                      /* 0x2C: SVCall (llamada al sistema) */
+  .word  DebugMon_Handler                 /* 0x30: Debug Monitor */
+  .word  0                                /* 0x34: reservado */
+  .word  PendSV_Handler                   /* 0x38: PendSV */
+  .word  SysTick_Handler                  /* 0x3C: SysTick (temporizador del sistema) */
+
+  /* Interrupciones externas: IRQ 0 a 96 (la direccion en la tabla es 0x40 + 4 * numero de IRQ) */
+  .word  WWDG_IRQHandler                  /* IRQ 0: Window Watchdog */
+  .word  PVD_IRQHandler                   /* IRQ 1: PVD por la linea EXTI */
+  .word  TAMP_STAMP_IRQHandler            /* IRQ 2: Tamper y TimeStamp por la linea EXTI */
+  .word  RTC_WKUP_IRQHandler              /* IRQ 3: RTC Wakeup por la linea EXTI */
+  .word  FLASH_IRQHandler                 /* IRQ 4: FLASH */
+  .word  RCC_IRQHandler                   /* IRQ 5: RCC */
+  .word  EXTI0_IRQHandler                 /* IRQ 6: EXTI linea 0 */
+  .word  EXTI1_IRQHandler                 /* IRQ 7: EXTI linea 1 */
+  .word  EXTI2_IRQHandler                 /* IRQ 8: EXTI linea 2 */
+  .word  EXTI3_IRQHandler                 /* IRQ 9: EXTI linea 3 */
+  .word  EXTI4_IRQHandler                 /* IRQ 10: EXTI linea 4 */
+  .word  DMA1_Stream0_IRQHandler          /* IRQ 11: DMA1 stream 0 */
+  .word  DMA1_Stream1_IRQHandler          /* IRQ 12: DMA1 stream 1 */
+  .word  DMA1_Stream2_IRQHandler          /* IRQ 13: DMA1 stream 2 */
+  .word  DMA1_Stream3_IRQHandler          /* IRQ 14: DMA1 stream 3 */
+  .word  DMA1_Stream4_IRQHandler          /* IRQ 15: DMA1 stream 4 */
+  .word  DMA1_Stream5_IRQHandler          /* IRQ 16: DMA1 stream 5 */
+  .word  DMA1_Stream6_IRQHandler          /* IRQ 17: DMA1 stream 6 */
+  .word  ADC_IRQHandler                   /* IRQ 18: ADC1, ADC2 y ADC3 */
+  .word  CAN1_TX_IRQHandler               /* IRQ 19: CAN1 TX */
+  .word  CAN1_RX0_IRQHandler              /* IRQ 20: CAN1 RX0 */
+  .word  CAN1_RX1_IRQHandler              /* IRQ 21: CAN1 RX1 */
+  .word  CAN1_SCE_IRQHandler              /* IRQ 22: CAN1 SCE */
+  .word  EXTI9_5_IRQHandler               /* IRQ 23: EXTI lineas 9 a 5 */
+  .word  TIM1_BRK_TIM9_IRQHandler         /* IRQ 24: TIM1 Break y TIM9 */
+  .word  TIM1_UP_TIM10_IRQHandler         /* IRQ 25: TIM1 Update y TIM10 */
+  .word  TIM1_TRG_COM_TIM11_IRQHandler    /* IRQ 26: TIM1 Trigger/Commutation y TIM11 */
+  .word  TIM1_CC_IRQHandler               /* IRQ 27: TIM1 Capture Compare */
+  .word  TIM2_IRQHandler                  /* IRQ 28: TIM2 */
+  .word  TIM3_IRQHandler                  /* IRQ 29: TIM3 */
+  .word  TIM4_IRQHandler                  /* IRQ 30: TIM4 */
+  .word  I2C1_EV_IRQHandler               /* IRQ 31: I2C1 evento */
+  .word  I2C1_ER_IRQHandler               /* IRQ 32: I2C1 error */
+  .word  I2C2_EV_IRQHandler               /* IRQ 33: I2C2 evento */
+  .word  I2C2_ER_IRQHandler               /* IRQ 34: I2C2 error */
+  .word  SPI1_IRQHandler                  /* IRQ 35: SPI1 */
+  .word  SPI2_IRQHandler                  /* IRQ 36: SPI2 */
+  .word  USART1_IRQHandler                /* IRQ 37: USART1 */
+  .word  USART2_IRQHandler                /* IRQ 38: USART2 */
+  .word  USART3_IRQHandler                /* IRQ 39: USART3 */
+  .word  EXTI15_10_IRQHandler             /* IRQ 40: EXTI lineas 15 a 10 */
+  .word  RTC_Alarm_IRQHandler             /* IRQ 41: Alarmas A y B del RTC por la linea EXTI */
+  .word  OTG_FS_WKUP_IRQHandler           /* IRQ 42: USB OTG FS Wakeup por la linea EXTI */
+  .word  TIM8_BRK_TIM12_IRQHandler        /* IRQ 43: TIM8 Break y TIM12 */
+  .word  TIM8_UP_TIM13_IRQHandler         /* IRQ 44: TIM8 Update y TIM13 */
+  .word  TIM8_TRG_COM_TIM14_IRQHandler    /* IRQ 45: TIM8 Trigger/Commutation y TIM14 */
+  .word  TIM8_CC_IRQHandler               /* IRQ 46: TIM8 Capture Compare */
+  .word  DMA1_Stream7_IRQHandler          /* IRQ 47: DMA1 stream 7 */
+  .word  FMC_IRQHandler                   /* IRQ 48: FMC */
+  .word  SDIO_IRQHandler                  /* IRQ 49: SDIO */
+  .word  TIM5_IRQHandler                  /* IRQ 50: TIM5 */
+  .word  SPI3_IRQHandler                  /* IRQ 51: SPI3 */
+  .word  UART4_IRQHandler                 /* IRQ 52: UART4 */
+  .word  UART5_IRQHandler                 /* IRQ 53: UART5 */
+  .word  TIM6_DAC_IRQHandler              /* IRQ 54: TIM6 y errores de underrun de DAC1 y DAC2 */
+  .word  TIM7_IRQHandler                  /* IRQ 55: TIM7 */
+  .word  DMA2_Stream0_IRQHandler          /* IRQ 56: DMA2 stream 0 */
+  .word  DMA2_Stream1_IRQHandler          /* IRQ 57: DMA2 stream 1 */
+  .word  DMA2_Stream2_IRQHandler          /* IRQ 58: DMA2 stream 2 */
+  .word  DMA2_Stream3_IRQHandler          /* IRQ 59: DMA2 stream 3 */
+  .word  DMA2_Stream4_IRQHandler          /* IRQ 60: DMA2 stream 4 */
+  .word  0                                /* IRQ 61: reservado */
+  .word  0                                /* IRQ 62: reservado */
+  .word  CAN2_TX_IRQHandler               /* IRQ 63: CAN2 TX */
+  .word  CAN2_RX0_IRQHandler              /* IRQ 64: CAN2 RX0 */
+  .word  CAN2_RX1_IRQHandler              /* IRQ 65: CAN2 RX1 */
+  .word  CAN2_SCE_IRQHandler              /* IRQ 66: CAN2 SCE */
+  .word  OTG_FS_IRQHandler                /* IRQ 67: USB OTG FS */
+  .word  DMA2_Stream5_IRQHandler          /* IRQ 68: DMA2 stream 5 */
+  .word  DMA2_Stream6_IRQHandler          /* IRQ 69: DMA2 stream 6 */
+  .word  DMA2_Stream7_IRQHandler          /* IRQ 70: DMA2 stream 7 */
+  .word  USART6_IRQHandler                /* IRQ 71: USART6 */
+  .word  I2C3_EV_IRQHandler               /* IRQ 72: I2C3 evento */
+  .word  I2C3_ER_IRQHandler               /* IRQ 73: I2C3 error */
+  .word  OTG_HS_EP1_OUT_IRQHandler        /* IRQ 74: USB OTG HS endpoint 1 OUT */
+  .word  OTG_HS_EP1_IN_IRQHandler         /* IRQ 75: USB OTG HS endpoint 1 IN */
+  .word  OTG_HS_WKUP_IRQHandler           /* IRQ 76: USB OTG HS Wakeup por la linea EXTI */
+  .word  OTG_HS_IRQHandler                /* IRQ 77: USB OTG HS */
+  .word  DCMI_IRQHandler                  /* IRQ 78: DCMI */
+  .word  0                                /* IRQ 79: reservado */
+  .word  0                                /* IRQ 80: reservado */
+  .word  FPU_IRQHandler                   /* IRQ 81: FPU */
+  .word  0                                /* IRQ 82: reservado */
+  .word  0                                /* IRQ 83: reservado */
+  .word  SPI4_IRQHandler                  /* IRQ 84: SPI4 */
+  .word  0                                /* IRQ 85: reservado */
+  .word  0                                /* IRQ 86: reservado */
+  .word  SAI1_IRQHandler                  /* IRQ 87: SAI1 */
+  .word  0                                /* IRQ 88: reservado */
+  .word  0                                /* IRQ 89: reservado */
+  .word  0                                /* IRQ 90: reservado */
+  .word  SAI2_IRQHandler                  /* IRQ 91: SAI2 */
+  .word  QUADSPI_IRQHandler               /* IRQ 92: QuadSPI */
+  .word  CEC_IRQHandler                   /* IRQ 93: HDMI-CEC */
+  .word  SPDIFRX_IRQHandler               /* IRQ 94: SPDIF-Rx */
+  .word  FMPI2C1_EV_IRQHandler            /* IRQ 95: FMPI2C1 evento */
+  .word  FMPI2C1_ER_IRQHandler            /* IRQ 96: FMPI2C1 error */
+
+  .size  g_pfnVectors, .-g_pfnVectors
+
+/**
+ * Alias debiles: cada manejador apunta a Default_Handler. Si en C se define una
+ * funcion con el mismo nombre (por ejemplo TIM3_IRQHandler), esa funcion reemplaza al alias.
+*/
+   .weak      NMI_Handler
+   .thumb_set NMI_Handler,Default_Handler
+
+   .weak      HardFault_Handler
+   .thumb_set HardFault_Handler,Default_Handler
+
+   .weak      MemManage_Handler
+   .thumb_set MemManage_Handler,Default_Handler
+
+   .weak      BusFault_Handler
+   .thumb_set BusFault_Handler,Default_Handler
+
+   .weak      UsageFault_Handler
+   .thumb_set UsageFault_Handler,Default_Handler
+
+   .weak      SVC_Handler
+   .thumb_set SVC_Handler,Default_Handler
+
+   .weak      DebugMon_Handler
+   .thumb_set DebugMon_Handler,Default_Handler
+
+   .weak      PendSV_Handler
+   .thumb_set PendSV_Handler,Default_Handler
+
+   .weak      SysTick_Handler
+   .thumb_set SysTick_Handler,Default_Handler
+
+   .weak      WWDG_IRQHandler
+   .thumb_set WWDG_IRQHandler,Default_Handler
+
+   .weak      PVD_IRQHandler
+   .thumb_set PVD_IRQHandler,Default_Handler
+
+   .weak      TAMP_STAMP_IRQHandler
+   .thumb_set TAMP_STAMP_IRQHandler,Default_Handler
+
+   .weak      RTC_WKUP_IRQHandler
+   .thumb_set RTC_WKUP_IRQHandler,Default_Handler
+
+   .weak      FLASH_IRQHandler
+   .thumb_set FLASH_IRQHandler,Default_Handler
+
+   .weak      RCC_IRQHandler
+   .thumb_set RCC_IRQHandler,Default_Handler
+
+   .weak      EXTI0_IRQHandler
+   .thumb_set EXTI0_IRQHandler,Default_Handler
+
+   .weak      EXTI1_IRQHandler
+   .thumb_set EXTI1_IRQHandler,Default_Handler
+
+   .weak      EXTI2_IRQHandler
+   .thumb_set EXTI2_IRQHandler,Default_Handler
+
+   .weak      EXTI3_IRQHandler
+   .thumb_set EXTI3_IRQHandler,Default_Handler
+
+   .weak      EXTI4_IRQHandler
+   .thumb_set EXTI4_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream0_IRQHandler
+   .thumb_set DMA1_Stream0_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream1_IRQHandler
+   .thumb_set DMA1_Stream1_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream2_IRQHandler
+   .thumb_set DMA1_Stream2_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream3_IRQHandler
+   .thumb_set DMA1_Stream3_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream4_IRQHandler
+   .thumb_set DMA1_Stream4_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream5_IRQHandler
+   .thumb_set DMA1_Stream5_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream6_IRQHandler
+   .thumb_set DMA1_Stream6_IRQHandler,Default_Handler
+
+   .weak      ADC_IRQHandler
+   .thumb_set ADC_IRQHandler,Default_Handler
+
+   .weak      CAN1_TX_IRQHandler
+   .thumb_set CAN1_TX_IRQHandler,Default_Handler
+
+   .weak      CAN1_RX0_IRQHandler
+   .thumb_set CAN1_RX0_IRQHandler,Default_Handler
+
+   .weak      CAN1_RX1_IRQHandler
+   .thumb_set CAN1_RX1_IRQHandler,Default_Handler
+
+   .weak      CAN1_SCE_IRQHandler
+   .thumb_set CAN1_SCE_IRQHandler,Default_Handler
+
+   .weak      EXTI9_5_IRQHandler
+   .thumb_set EXTI9_5_IRQHandler,Default_Handler
+
+   .weak      TIM1_BRK_TIM9_IRQHandler
+   .thumb_set TIM1_BRK_TIM9_IRQHandler,Default_Handler
+
+   .weak      TIM1_UP_TIM10_IRQHandler
+   .thumb_set TIM1_UP_TIM10_IRQHandler,Default_Handler
+
+   .weak      TIM1_TRG_COM_TIM11_IRQHandler
+   .thumb_set TIM1_TRG_COM_TIM11_IRQHandler,Default_Handler
+
+   .weak      TIM1_CC_IRQHandler
+   .thumb_set TIM1_CC_IRQHandler,Default_Handler
+
+   .weak      TIM2_IRQHandler
+   .thumb_set TIM2_IRQHandler,Default_Handler
+
+   .weak      TIM3_IRQHandler
+   .thumb_set TIM3_IRQHandler,Default_Handler
+
+   .weak      TIM4_IRQHandler
+   .thumb_set TIM4_IRQHandler,Default_Handler
+
+   .weak      I2C1_EV_IRQHandler
+   .thumb_set I2C1_EV_IRQHandler,Default_Handler
+
+   .weak      I2C1_ER_IRQHandler
+   .thumb_set I2C1_ER_IRQHandler,Default_Handler
+
+   .weak      I2C2_EV_IRQHandler
+   .thumb_set I2C2_EV_IRQHandler,Default_Handler
+
+   .weak      I2C2_ER_IRQHandler
+   .thumb_set I2C2_ER_IRQHandler,Default_Handler
+
+   .weak      SPI1_IRQHandler
+   .thumb_set SPI1_IRQHandler,Default_Handler
+
+   .weak      SPI2_IRQHandler
+   .thumb_set SPI2_IRQHandler,Default_Handler
+
+   .weak      USART1_IRQHandler
+   .thumb_set USART1_IRQHandler,Default_Handler
+
+   .weak      USART2_IRQHandler
+   .thumb_set USART2_IRQHandler,Default_Handler
+
+   .weak      USART3_IRQHandler
+   .thumb_set USART3_IRQHandler,Default_Handler
+
+   .weak      EXTI15_10_IRQHandler
+   .thumb_set EXTI15_10_IRQHandler,Default_Handler
+
+   .weak      RTC_Alarm_IRQHandler
+   .thumb_set RTC_Alarm_IRQHandler,Default_Handler
+
+   .weak      OTG_FS_WKUP_IRQHandler
+   .thumb_set OTG_FS_WKUP_IRQHandler,Default_Handler
+
+   .weak      TIM8_BRK_TIM12_IRQHandler
+   .thumb_set TIM8_BRK_TIM12_IRQHandler,Default_Handler
+
+   .weak      TIM8_UP_TIM13_IRQHandler
+   .thumb_set TIM8_UP_TIM13_IRQHandler,Default_Handler
+
+   .weak      TIM8_TRG_COM_TIM14_IRQHandler
+   .thumb_set TIM8_TRG_COM_TIM14_IRQHandler,Default_Handler
+
+   .weak      TIM8_CC_IRQHandler
+   .thumb_set TIM8_CC_IRQHandler,Default_Handler
+
+   .weak      DMA1_Stream7_IRQHandler
+   .thumb_set DMA1_Stream7_IRQHandler,Default_Handler
+
+   .weak      FMC_IRQHandler
+   .thumb_set FMC_IRQHandler,Default_Handler
+
+   .weak      SDIO_IRQHandler
+   .thumb_set SDIO_IRQHandler,Default_Handler
+
+   .weak      TIM5_IRQHandler
+   .thumb_set TIM5_IRQHandler,Default_Handler
+
+   .weak      SPI3_IRQHandler
+   .thumb_set SPI3_IRQHandler,Default_Handler
+
+   .weak      UART4_IRQHandler
+   .thumb_set UART4_IRQHandler,Default_Handler
+
+   .weak      UART5_IRQHandler
+   .thumb_set UART5_IRQHandler,Default_Handler
+
+   .weak      TIM6_DAC_IRQHandler
+   .thumb_set TIM6_DAC_IRQHandler,Default_Handler
+
+   .weak      TIM7_IRQHandler
+   .thumb_set TIM7_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream0_IRQHandler
+   .thumb_set DMA2_Stream0_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream1_IRQHandler
+   .thumb_set DMA2_Stream1_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream2_IRQHandler
+   .thumb_set DMA2_Stream2_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream3_IRQHandler
+   .thumb_set DMA2_Stream3_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream4_IRQHandler
+   .thumb_set DMA2_Stream4_IRQHandler,Default_Handler
+
+   .weak      CAN2_TX_IRQHandler
+   .thumb_set CAN2_TX_IRQHandler,Default_Handler
+
+   .weak      CAN2_RX0_IRQHandler
+   .thumb_set CAN2_RX0_IRQHandler,Default_Handler
+
+   .weak      CAN2_RX1_IRQHandler
+   .thumb_set CAN2_RX1_IRQHandler,Default_Handler
+
+   .weak      CAN2_SCE_IRQHandler
+   .thumb_set CAN2_SCE_IRQHandler,Default_Handler
+
+   .weak      OTG_FS_IRQHandler
+   .thumb_set OTG_FS_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream5_IRQHandler
+   .thumb_set DMA2_Stream5_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream6_IRQHandler
+   .thumb_set DMA2_Stream6_IRQHandler,Default_Handler
+
+   .weak      DMA2_Stream7_IRQHandler
+   .thumb_set DMA2_Stream7_IRQHandler,Default_Handler
+
+   .weak      USART6_IRQHandler
+   .thumb_set USART6_IRQHandler,Default_Handler
+
+   .weak      I2C3_EV_IRQHandler
+   .thumb_set I2C3_EV_IRQHandler,Default_Handler
+
+   .weak      I2C3_ER_IRQHandler
+   .thumb_set I2C3_ER_IRQHandler,Default_Handler
+
+   .weak      OTG_HS_EP1_OUT_IRQHandler
+   .thumb_set OTG_HS_EP1_OUT_IRQHandler,Default_Handler
+
+   .weak      OTG_HS_EP1_IN_IRQHandler
+   .thumb_set OTG_HS_EP1_IN_IRQHandler,Default_Handler
+
+   .weak      OTG_HS_WKUP_IRQHandler
+   .thumb_set OTG_HS_WKUP_IRQHandler,Default_Handler
+
+   .weak      OTG_HS_IRQHandler
+   .thumb_set OTG_HS_IRQHandler,Default_Handler
+
+   .weak      DCMI_IRQHandler
+   .thumb_set DCMI_IRQHandler,Default_Handler
+
+   .weak      FPU_IRQHandler
+   .thumb_set FPU_IRQHandler,Default_Handler
+
+   .weak      SPI4_IRQHandler
+   .thumb_set SPI4_IRQHandler,Default_Handler
+
+   .weak      SAI1_IRQHandler
+   .thumb_set SAI1_IRQHandler,Default_Handler
+
+   .weak      SAI2_IRQHandler
+   .thumb_set SAI2_IRQHandler,Default_Handler
+
+   .weak      QUADSPI_IRQHandler
+   .thumb_set QUADSPI_IRQHandler,Default_Handler
+
+   .weak      CEC_IRQHandler
+   .thumb_set CEC_IRQHandler,Default_Handler
+
+   .weak      SPDIFRX_IRQHandler
+   .thumb_set SPDIFRX_IRQHandler,Default_Handler
+
+   .weak      FMPI2C1_EV_IRQHandler
+   .thumb_set FMPI2C1_EV_IRQHandler,Default_Handler
+
+   .weak      FMPI2C1_ER_IRQHandler
+   .thumb_set FMPI2C1_ER_IRQHandler,Default_Handler
+```
+
+**Cabecera y directivas**
+- Primera línea: origen del archivo (decisión de Daniela). Después, la cabecera de copyright de ST completa, sin cambios.
+- `.syntax unified`: sintaxis unificada de ARM (la misma para ARM y Thumb).
+- `.cpu cortex-m4`: ensambla para el Cortex-M4.
+- `.fpu softvfp`: sin FPU (coincide con `-mfloat-abi=soft` del Makefile).
+- `.thumb`: el código es Thumb.
+- `.global g_pfnVectors`, `.global Default_Handler` y `.global Reset_Handler`: hacen visibles esos nombres al enlazador. `Reset_Handler` es global porque el linker script lo usa en `ENTRY(Reset_Handler)` (el ejemplo lo declaraba `.weak`; decisión de Daniela: `.global`).
+
+**`Reset_Handler`**
+- `.section .text.Reset_Handler` y `.type Reset_Handler, %function`: la función va en su propia sección dentro de `.text` y se marca como función.
+- `ldr sp, =_estack`: carga SP con `_estack` (`0x20020000`, final de la RAM). Es lo primero porque las llamadas a funciones usan la pila. La CPU ya lo había cargado desde la palabra 0 de la tabla; aquí se repite para dejarlo explícito.
+- **Copia de `.data`** (FLASH a RAM):
+  - `ldr r0, =_sdata`: r0 = inicio de `.data` en RAM (símbolo del linker).
+  - `ldr r1, =_edata`: r1 = fin de `.data` en RAM.
+  - `ldr r2, =_sidata`: r2 = dónde está el valor inicial en FLASH.
+  - `movs r3, #0`: r3 = desplazamiento en bytes, empieza en 0.
+  - `b LoopCopyDataInit`: salta a la condición, para no copiar nada si `.data` está vacía.
+  - `CopyDataInit`: `ldr r4, [r2, r3]` lee una palabra de FLASH (dirección `r2 + r3`); `str r4, [r0, r3]` la escribe en RAM (`r0 + r3`); `adds r3, r3, #4` avanza 4 bytes.
+  - `LoopCopyDataInit`: `adds r4, r0, r3` calcula la dirección actual de RAM; `cmp r4, r1` la compara con `_edata`; `bcc CopyDataInit` (salta si es menor, sin signo) repite mientras no se llegue al final. Por eso hace falta `ALIGN(4)` en el linker: se copia de 4 en 4.
+- **Borrado de `.bss`**:
+  - `ldr r2, =_sbss`, `ldr r4, =_ebss`, `movs r3, #0`: inicio, fin y valor cero.
+  - `b LoopFillZerobss`: salta a la condición.
+  - `FillZerobss`: `str r3, [r2]` escribe un cero (4 bytes); `adds r2, r2, #4` avanza.
+  - `LoopFillZerobss`: `cmp r2, r4` y `bcc FillZerobss` repiten hasta `_ebss`. C garantiza que las globales sin valor inicial valen 0; aquí se cumple esa garantía.
+- `bl main`: llama a `main` (`bl` guarda la dirección de retorno en `lr`).
+- `b .`: si `main` retorna, la CPU se queda en un bucle infinito (`.` es la dirección de la propia instrucción). El ejemplo hacía `bx lr`, que saltaría a una dirección sin sentido.
+- `.size Reset_Handler, .-Reset_Handler`: le dice al enlazador y al depurador cuántos bytes mide la función.
+
+**`Default_Handler`**
+- Sección propia `.text.Default_Handler`. La etiqueta `Infinite_Loop` con `b Infinite_Loop` es un bucle infinito: si llega una interrupción que nadie atiende, el programa se queda aquí y se puede examinar con el depurador.
+
+**Tabla de vectores (`g_pfnVectors`)**
+- `.section .isr_vector,"a",%progbits`: sección `.isr_vector`, de solo lectura (`a` = alloc) y con datos. El linker script la coloca primero en FLASH, en `0x08000000`.
+- Cada `.word` ocupa 4 bytes y es la dirección de un manejador; el procesador salta a esa dirección cuando ocurre el evento. `.word 0` marca una posición reservada.
+- **Primeras 16 palabras (excepciones del sistema, `0x00` a `0x3C`):**
+  - `0x00` `_estack`: valor inicial de SP. No es un manejador; la CPU lo carga en SP al arrancar.
+  - `0x04` `Reset_Handler`: la CPU salta aquí al arrancar.
+  - `0x08` a `0x18`: NMI, HardFault, MemManage, BusFault y UsageFault.
+  - `0x1C` a `0x28`: cuatro palabras reservadas.
+  - `0x2C` SVC, `0x30` DebugMon, `0x34` reservada, `0x38` PendSV y `0x3C` SysTick.
+- **Interrupciones externas (IRQ 0 a 96):** la IRQ número `n` está en la dirección `0x40 + 4 × n`; por ejemplo, TIM3 es la IRQ 29 y queda en `0xB4`. Cada línea trae un comentario con su número y nombre según la Table 38. Hay 86 con nombre y 11 reservadas (IRQ 61, 62, 79, 80, 82, 83, 85, 86, 88, 89 y 90, que valen 0).
+- `.size g_pfnVectors, .-g_pfnVectors`: tamaño de la tabla (113 palabras, `0x1C4` bytes).
+
+**Alias débiles**
+- Para cada uno de los 95 manejadores (9 del sistema y 86 IRQ): `.weak NOMBRE` lo declara débil y `.thumb_set NOMBRE,Default_Handler` hace que apunte a `Default_Handler` (con el bit Thumb en 1).
+- Si en C se define una función con el mismo nombre (por ejemplo `void TIM3_IRQHandler(void)`), el enlazador usa la tuya y descarta el alias. Si no se define, la IRQ cae en el bucle infinito de `Default_Handler`.
+
+#### Modificaciones y correcciones (respecto al `crt0.S` del profesor)
+- **Tabla de vectores corregida para la F446.** El ejemplo es del F401, y varios vectores que allí son «Reserved» en la F446 son IRQ reales (USART3, TIM8 y TIM12 a 14, FMC, UART4 y UART5, TIM6_DAC, TIM7, CAN1 y CAN2, OTG_HS, DCMI, SAI1 y SAI2, QuadSPI, HDMI-CEC, SPDIF-Rx y FMPI2C1). Sin la corrección, todas las IRQ posteriores a la 38 (USART2) quedarían desplazadas, y una IRQ podría ir a un manejador equivocado.
+- Se quitó `bl SystemInit` (viene de CMSIS, ya decidido en `CLAUDE.md`).
+- Se quitó `bl __libc_init_array` (viene de libc; con `-nostdlib` el enlace fallaba con `undefined reference`).
+- Después de `main`, el `bx lr` se cambió por `b .`.
+- Se quitaron las 5 líneas `.word _sidata`, `_sdata`, `_edata`, `_sbss` y `_ebss` sueltas del inicio (no las usa nadie).
+- `Reset_Handler` pasó de `.weak` a `.global`.
+- Se agregó la línea de origen y comentarios en español en cada vector y en cada bloque de `Reset_Handler`.
+- Los nombres de los manejadores son los de CMSIS: `SVC_Handler`, `DebugMon_Handler`, `QUADSPI_IRQHandler`, `CEC_IRQHandler`, `SPDIFRX_IRQHandler`, `FMPI2C1_EV_IRQHandler` y `FMPI2C1_ER_IRQHandler` (decisión de Daniela).
+- El archivo se generó con un script a partir de la Table 38 para evitar errores de transcripción; el script no forma parte del repo.
+
+#### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Si `main` retorna | Bucle infinito, `bx lr` o `Default_Handler` | Bucle infinito (`b .`) |
+| 5 líneas `.word` sueltas | Quitarlas o dejarlas | Quitarlas |
+| Cabecera de ST | Solo una línea de origen o la cabecera completa | Cabecera completa, con una línea de origen arriba |
+| Nombres de manejadores | Los de CMSIS u otros | Los de CMSIS, como se propusieron |
+| Manejadores por defecto | Pareja `.weak` y `.thumb_set` por cada uno, o `PROVIDE` en el linker | Pareja `.weak` y `.thumb_set` (como el profesor) |
+| `Reset_Handler` | `.weak` o `.global` | `.global` |
+| Comentarios | Uno por vector y por bloque | Sí |
+
+#### Cómo se probó
+Fuera del repo, con el `Makefile`, el `linker_script.ld` y el `crt0.S` del repo, y un `main.c` de prueba:
+- `make` termina sin errores ni advertencias, sin parches. El enlace ya no falla (no hay `SystemInit` ni `__libc_init_array`).
+- `arm-none-eabi-size`: `text 562`, `data 4`, `bss 4`.
+- `nm -n`: `g_pfnVectors = 0x08000000`, `Reset_Handler = 0x080001e4`, `Default_Handler = 0x0800022c`, `_estack = 0x20020000`.
+- `objdump -s` a partir de `0x08000000`: la primera palabra es `0x20020000` y la segunda `0x080001e5` (`Reset_Handler` con el bit Thumb).
+- Con un `main.c` que define una función distinta para cada uno de los 95 manejadores, se comprobó que las 113 palabras de la tabla apuntan al manejador que dice su línea (0 errores) y que las 16 reservadas (5 del sistema y 11 IRQ) valen 0. Ejemplos: `SysTick_Handler` en `0x03C`, `TIM3_IRQHandler` en `0x0B4`, `USART2_IRQHandler` en `0x0D8` y `USART3_IRQHandler` en `0x0DC`, igual que en la Table 38.
+- Lo que falta: comprobar en la placa que el arranque copia `.data` y borra `.bss` bien. Se hace en la pieza 4 con `make flash`.
+
+#### Errores encontrados y cómo se resolvieron
+- Con el `crt0.S` del profesor sin cambios, el enlace falla por `__libc_init_array`. Se quitó la llamada (ver arriba).
+- En la prueba, ver los símbolos de cada vector con `nm` no distinguía un manejador de otro, porque todos los alias débiles apuntan a la misma dirección (`Default_Handler`). Se resolvió definiendo una función distinta por manejador solo para la prueba.
+
+#### Preguntas de autoevaluación
+1. ¿Qué hace el procesador al encender, antes de ejecutar tu código?
+   Lee la palabra 0 de la tabla de vectores y la carga en SP, lee la palabra 1 (`Reset_Handler`) y salta allí.
+2. ¿Por qué `Reset_Handler` copia `.data` y borra `.bss` antes de llamar a `main`?
+   Porque las variables globales con valor inicial viven en RAM, pero su valor está guardado en FLASH (hay que copiarlo), y C garantiza que las globales sin valor inicial valen 0 (la RAM arranca con basura).
+3. ¿Qué pasa si llega una IRQ para la que no definiste manejador?
+   Su vector apunta, por el alias débil, a `Default_Handler`, que es un bucle infinito.
+4. ¿Cómo se reemplaza un alias débil, por ejemplo para TIM3?
+   Definiendo en C una función con el mismo nombre exacto, `void TIM3_IRQHandler(void)`; el enlazador usa esa y no el alias.
+5. ¿Por qué había que rehacer la tabla de vectores del profesor?
+   Porque era la del F401 y en la F446 varias posiciones «reservadas» son IRQ reales; sin corregirla, las IRQ posteriores quedarían desplazadas.
+6. ¿Qué dirección ocupa la IRQ número `n` en la tabla?
+   `0x40 + 4 × n`; por ejemplo, TIM3 (IRQ 29) está en `0xB4`.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
