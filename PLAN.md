@@ -1,6 +1,6 @@
 # Plan paso a paso — Snake en panel P10 RGB (NUCLEO-F446RE, bare metal)
 
-Cada paso termina con una prueba visible y con preguntas que debes poder contestar. No se pasa al siguiente paso hasta que el actual compile, funcione en la placa y lo puedas explicar. Los pasos 1 a 3 son para tener la base; la pantalla empieza en el paso 4.
+Cada paso termina con una prueba visible y con preguntas que debes poder contestar. No se pasa al siguiente paso hasta que el actual compile, funcione en la placa y lo puedas explicar. Los pasos 1 a 3 son para tener la base; la pantalla empieza en el paso 4. El juego completo se hace primero en un solo panel de 32x16, y el segundo panel se agrega en el paso 11.
 
 ## Reglas de código (para Daniela y para Claude Code)
 
@@ -76,7 +76,8 @@ Decisión tomada: no se usa el header CMSIS de ST (`stm32f4xx.h`) ni ningún otr
 
 ## Datos de hardware que no cambian
 
-- Panel: HUB75, 32x16 por módulo, escaneo 1/4 (señales A y B), R1 G1 B1 (filas 0-7) y R2 G2 B2 (filas 8-15).
+- Panel: HUB75, 32x16 por módulo (32 columnas, 16 filas), escaneo 1/4 (señales A y B), R1 G1 B1 (filas 0-7) y R2 G2 B2 (filas 8-15).
+- **Etapa 1 (ahora): un solo panel**, 32x16 = 512 píxeles. **Etapa 2 (paso 11): segundo panel**, 32x32 = 1024 píxeles. Todo el código se escribe pensando en que el tamaño del tablero está en constantes, para que la ampliación sea un cambio pequeño.
 - Pines: R1=PC0, G1=PC1, B1=PC2, R2=PC3, G2=PC4, B2=PC5, OE=PC6, LAT=PC7, CLK=PC8, A=PC10, B=PC11, GND común.
 - Botones (activos en bajo, pull-up interno): A=PA10, B=PB3, C=PB5, D=PB4, E=PB10, F=PA8.
 - LED de la placa: PA5. Botón azul: PC13. UART de depuración: USART2 en PA2/PA3, 115200.
@@ -126,32 +127,34 @@ Decisión tomada: no se usa el header CMSIS de ST (`stm32f4xx.h`) ni ningún otr
 - Prueba: mostrar números 0 al 9 y un marco.
 - Debes poder explicar: cómo se guarda un color en 3 bits (R, G, B).
 
-### Paso 7 — Dos paneles en cadena (32x32)
-- Conectar OUT del panel 1 con IN del panel 2, alimentar ambos con 5 V y GND común (ver la fuente en `docs/conexiones.md`).
-- Cada fase pasa a ser de 128 bits. Medir el orden del segundo panel con un píxel que camina y actualizar el mapeo.
-- Prueba: marco en los 32x32 y diagonales completas.
-- Debes poder explicar: por qué dos paneles encadenados se ven como uno de 64x16 y cómo se reordena a 32x32.
-
-### Paso 8 — Mover un punto con los botones
-- Un punto que se mueve cada cierto tiempo (temporizador de software con SysTick) hacia la dirección elegida con los botones. No puede salir del borde.
+### Paso 7 — Mover un punto con los botones
+- Definir el tamaño del tablero en un solo lugar (dos constantes: ancho y alto). Ahora son 32 columnas y 16 filas. Un punto se mueve cada cierto tiempo (temporizador de software con SysTick) hacia la dirección elegida con los botones. No puede salir del borde.
 - Prueba: A, B, C y D mueven el punto; E pausa; F reinicia.
-- Debes poder explicar: por qué el tiempo del juego se separa del refresco de la pantalla.
+- Debes poder explicar: por qué el tiempo del juego se separa del refresco de la pantalla, y por qué el tamaño del tablero está en constantes.
 
-### Paso 9 — Snake básico
-- Cuerpo de la serpiente en un arreglo circular de 1024 posiciones (máximo posible en 32x32), cabeza y cola. Movimiento, no poder girar 180°, choque con paredes y con el propio cuerpo = fin del juego.
+### Paso 8 — Snake básico
+- Cuerpo de la serpiente en un arreglo circular con tantas posiciones como píxeles tiene el tablero (512 con un panel, 1024 con dos), cabeza y cola. Movimiento, no poder girar 180°, choque con paredes y con el propio cuerpo = fin del juego.
 - Comida en una posición aleatoria libre; al comerla la serpiente crece (no se quita la cola).
 - Prueba: la serpiente se mueve, crece y muere al chocar.
 - Debes poder explicar: el arreglo circular (índices de cabeza y cola), y por qué no hay límite de longitud.
 
-### Paso 10 — Números aleatorios y veneno
+### Paso 9 — Números aleatorios y veneno
 - Generador pseudoaleatorio sencillo (LFSR) sembrado con el valor de un timer cuando se presiona el primer botón.
 - Veneno de otro color (por ejemplo rojo, y la comida verde): al comerlo, la serpiente se acorta. Definir qué pasa si el largo llega a 0.
 - Prueba: comida y veneno aparecen en celdas libres; el veneno acorta.
 - Debes poder explicar: cómo funciona el LFSR y por qué hace falta sembrarlo con algo que cambie.
 
-### Paso 11 — Puntaje y fin de juego
-- Contador de puntos mostrado al terminar con la fuente 3x5 (hasta 4 dígitos). Pantalla de fin de juego y reinicio.
+### Paso 10 — Puntaje y fin de juego
+- Contador de puntos mostrado al terminar con la fuente 3x5 (hasta 4 dígitos; caben en 16 columnas). Pantalla de fin de juego y reinicio.
 - Prueba: al morir se ve el puntaje correcto y F reinicia.
+- Hito: el juego completo funciona en un solo panel de 32x16. Con esto se compra el segundo panel.
+
+### Paso 11 — Ampliación a 32x32 con el segundo panel
+- Antes: comprar el segundo panel con tiempo, porque el proyecto debe presentarse en 32x32. Conectar el OUT del panel 1 con el IN del panel 2 con otro cable plano, y alimentar ambos con 5 V y GND común (ver la fuente en `docs/conexiones.md`; revisar también que las filas del conector queden bien, como en el panel 1).
+- Cada fase pasa a ser de 128 bits. Medir el orden del segundo panel con un píxel que camina y actualizar `docs/mapeo_pixeles.md` y el driver.
+- Cambiar el alto del tablero de 16 a 32 (la constante del paso 7) y el tamaño del arreglo circular a 1024.
+- Prueba: marco en los 32x32, diagonales completas y el juego completo en los dos paneles.
+- Debes poder explicar: por qué dos paneles encadenados se ven como uno de 64x16 y cómo se reordena a 32x32, y qué partes del código no tuvieron que cambiar.
 
 ### Paso 12 — Pulido (solo si hay tiempo)
 - Niveles de velocidad, brillo con PWM en OE, pausa, doble buffer para evitar parpadeos entre el juego y la interrupción.

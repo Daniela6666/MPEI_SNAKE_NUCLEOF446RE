@@ -1,18 +1,18 @@
 # Snake en panel P10 RGB — NUCLEO-F446RE (bare metal)
 
-Proyecto final de Microprocesadores e Interfaces (Ingeniería Electrónica, MPEI 2026-2). Juego Snake en dos paneles P10 RGB de 32x16 (32x32 en total), controlado con los botones de un Joystick Shield V1.A, programado sin HAL ni CMSIS: todos los periféricos se manejan escribiendo registros.
+Proyecto final de Microprocesadores e Interfaces (Ingeniería Electrónica, MPEI 2026-2). Juego Snake en paneles P10 RGB de 32x16: primero un panel (32x16) y, cuando el juego funcione, dos paneles encadenados (32x32), controlado con los botones de un Joystick Shield V1.A, programado sin HAL ni CMSIS: todos los periféricos se manejan escribiendo registros.
 
 Integrantes: Daniela y Daniel (completar con nombres completos).
 
 ## Reglas del juego
 - La serpiente crece al comer comida.
 - Se achica al comer veneno.
-- No hay límite de longitud (cabe hasta en los 1024 píxeles).
+- No hay límite de longitud (cabe hasta en todos los píxeles del tablero: 512 con un panel, 1024 con dos).
 - Al terminar el juego se muestra el puntaje.
 
 ## Hardware
 - Placa NUCLEO-F446RE (Cortex-M4).
-- 2 módulos P10 RGB exterior 32x16, HUB75, escaneo 1/4, alimentados con 5 V externos.
+- Módulos P10 RGB exterior 32x16, HUB75, escaneo 1/4, alimentados con 5 V externos. Ahora hay 1; el segundo se agrega en el paso 11.
 - Joystick Shield V1.A (solo se usan los botones).
 
 Conexiones completas en [`docs/conexiones.md`](docs/conexiones.md).

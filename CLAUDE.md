@@ -28,11 +28,11 @@ Proyecto final de Microprocesadores e Interfaces. Daniela debe poder explicar TO
 - TIM3 (APB1 a 42 MHz con divisor 2) recibe 84 MHz.
 
 ## Hardware
-- Panel P10 RGB 32x16 (HUB75, escaneo 1/4), 2 paneles para 32x32. 5 V externos, GND común.
+- Panel P10 RGB 32x16 (32 columnas, 16 filas; HUB75, escaneo 1/4). **Etapa 1: un solo panel (512 píxeles).** Etapa 2: segundo panel encadenado para 32x32 (paso 11 del plan), cuando el juego ya funcione. Por eso el ancho y el alto del tablero van en constantes, no escritos a mano en cada función. 5 V externos, GND común.
 - Panel: R1=PC0 G1=PC1 B1=PC2 R2=PC3 G2=PC4 B2=PC5 OE=PC6 LAT=PC7 CLK=PC8 A=PC10 B=PC11.
 - Botones del shield (activos en bajo, pull-up interno): A=PA10 B=PB3 C=PB5 D=PB4 E=PB10 F=PA8. Solo se usan botones, no el stick.
 - LED PA5, botón azul PC13, USART2 PA2/PA3 a 115200 (VCP del ST-LINK).
 - Mapeo de píxeles medido: bloque = bit/16, j = bit%16; j<8: x = 8·bloque + 7 − j, y = fase; j≥8: x = 8·bloque + j − 8, y = fase + 4; R2/G2/B2 suman 8 a y.
 
 ## Juego
-Snake 32x32: crece al comer comida, se achica al comer veneno, sin límite de longitud (arreglo circular de 1024), muestra el puntaje al terminar.
+Snake (32x16 ahora, 32x32 al final): crece al comer comida, se achica al comer veneno, sin límite de longitud (arreglo circular con tantas posiciones como píxeles: 512 ahora, 1024 con dos paneles), muestra el puntaje al terminar.
