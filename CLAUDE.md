@@ -44,4 +44,9 @@ Para cambiar un modelo, edita la línea `model:` del archivo del subagente (alia
 - Mapeo de píxeles medido: bloque = bit/16, j = bit%16; j<8: x = 8·bloque + 7 − j, y = fase; j≥8: x = 8·bloque + j − 8, y = fase + 4; R2/G2/B2 suman 8 a y.
 
 ## Juego
-Snake (32x16 ahora, 32x32 al final): crece al comer comida, se achica al comer veneno, sin límite de longitud (arreglo circular con tantas posiciones como píxeles: 512 ahora, 1024 con dos paneles), muestra el puntaje al terminar.
+Snake (32x16 ahora, 32x32 al final), sin límite de longitud (arreglo circular con tantas posiciones como píxeles: 512 ahora, 1024 con dos paneles). Muestra el puntaje al terminar. Elementos y colores:
+- **Serpiente verde.** Se mueve con los botones.
+- **Manzana roja.** Al comerla: +1 punto y la serpiente se alarga 1 segmento.
+- **Veneno azul.** Al comerlo: −2 puntos y la serpiente pierde 2 segmentos. Aparece, espera un tiempo y desaparece solo.
+
+Reglas del veneno que Daniela decide en el paso 9 (preguntárselas, no suponer): cuánto dura, cada cuánto reaparece, qué pasa si el puntaje es menor que 2 y qué pasa si la serpiente tiene 2 segmentos o menos.

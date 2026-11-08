@@ -84,6 +84,14 @@ Decisión tomada: no se usa el header CMSIS de ST (`stm32f4xx.h`) ni ningún otr
 - LED de la placa: PA5. Botón azul: PC13. UART de depuración: USART2 en PA2/PA3, 115200.
 - Alimentación del panel: 5 V externos con GND común. Nunca pantalla completa en blanco con brillo alto.
 
+## Reglas del juego
+
+- Serpiente verde, manzana roja y veneno azul.
+- Manzana: suma 1 punto y alarga la serpiente 1 segmento.
+- Veneno: resta 2 puntos y quita 2 segmentos de la serpiente. Aparece, espera un tiempo y luego desaparece solo.
+- Sin límite de longitud de la serpiente. El puntaje se muestra al terminar.
+- Pendiente de decidir con Daniela en el paso 9: duración del veneno, cada cuánto reaparece, qué pasa si el puntaje es menor que 2 y qué pasa si la serpiente tiene 2 segmentos o menos.
+
 ## Pasos
 
 ### Paso 0 — Repositorio y archivos de contexto
@@ -133,20 +141,23 @@ Decisión tomada: no se usa el header CMSIS de ST (`stm32f4xx.h`) ni ningún otr
 - Prueba: A, B, C y D mueven el punto; E pausa; F reinicia.
 - Debes poder explicar: por qué el tiempo del juego se separa del refresco de la pantalla, y por qué el tamaño del tablero está en constantes.
 
-### Paso 8 — Snake básico
-- Cuerpo de la serpiente en un arreglo circular con tantas posiciones como píxeles tiene el tablero (512 con un panel, 1024 con dos), cabeza y cola. Movimiento, no poder girar 180°, choque con paredes y con el propio cuerpo = fin del juego.
-- Comida en una posición aleatoria libre; al comerla la serpiente crece (no se quita la cola).
-- Prueba: la serpiente se mueve, crece y muere al chocar.
+### Paso 8 — Snake básico (primer avance para mostrar al profesor)
+- Serpiente verde que se mueve con los botones. Cuerpo en un arreglo circular con tantas posiciones como píxeles tiene el tablero (512 con un panel, 1024 con dos), cabeza y cola. No poder girar 180°; choque con paredes y con el propio cuerpo = fin del juego.
+- Manzana roja en una celda libre; al comerla, la serpiente crece 1 segmento (no se quita la cola) y el puntaje sube 1.
+- **Pendiente de decidir con Daniela al empezar el paso 8:** cómo se elige la posición de la manzana, porque el generador aleatorio (LFSR) llega en el paso 9. Opciones: (a) calcularla con el contador de milisegundos de SysTick, (b) una lista fija de posiciones que se repite, (c) adelantar el LFSR a este paso.
+- Prueba: la serpiente verde se mueve con los botones, crece al comer una manzana roja y muere al chocar.
 - Debes poder explicar: el arreglo circular (índices de cabeza y cola), y por qué no hay límite de longitud.
 
-### Paso 9 — Números aleatorios y veneno
-- Generador pseudoaleatorio sencillo (LFSR) sembrado con el valor de un timer cuando se presiona el primer botón.
-- Veneno de otro color (por ejemplo rojo, y la comida verde): al comerlo, la serpiente se acorta. Definir qué pasa si el largo llega a 0.
-- Prueba: comida y veneno aparecen en celdas libres; el veneno acorta.
+### Paso 9 — Números aleatorios y veneno azul
+- Generador pseudoaleatorio sencillo (LFSR) sembrado con el valor de un timer cuando se presiona el primer botón. Se usa para la posición de la manzana y del veneno.
+- Veneno azul: al comerlo, el puntaje baja 2 y la serpiente pierde 2 segmentos. Aparece, espera un tiempo y desaparece solo.
+- Antes de programar, Claude pregunta a Daniela: (1) cuánto dura el veneno en pantalla, (2) cada cuánto reaparece, (3) qué pasa si el puntaje es menor que 2 al comer veneno, (4) qué pasa si la serpiente tiene 2 segmentos o menos.
+- Prueba: manzana y veneno aparecen en celdas libres; el veneno desaparece solo y, al comerlo, resta puntos y acorta la serpiente.
 - Debes poder explicar: cómo funciona el LFSR y por qué hace falta sembrarlo con algo que cambie.
 
 ### Paso 10 — Puntaje y fin de juego
 - Contador de puntos mostrado al terminar con la fuente 3x5 (hasta 4 dígitos; caben en 16 columnas). Pantalla de fin de juego y reinicio.
+- El puntaje puede bajar con el veneno; cómo se muestra si queda negativo o en 0 se decide en el paso 9, junto con la regla del puntaje menor que 2.
 - Prueba: al morir se ve el puntaje correcto y F reinicia.
 - Hito: el juego completo funciona en un solo panel de 32x16. Con esto se compra el segundo panel.
 
