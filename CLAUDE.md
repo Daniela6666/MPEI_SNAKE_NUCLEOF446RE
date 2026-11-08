@@ -9,6 +9,15 @@ Proyecto final de Microprocesadores e Interfaces. Daniela debe poder explicar TO
 
 - **Mantén la guía de estudio `docs/GUIA_DE_ESTUDIO.md`**, para que Daniela y su compañero estudien. En el mismo commit en que entra código, agrega o actualiza ahí la sección del paso (`## Paso N — título`) con: objetivo, archivos creados o modificados, concepto de clase, el código tal como quedó en el repo (idéntico, sin "..." ni líneas omitidas) con su explicación línea por línea, modificaciones y correcciones con su motivo, decisiones tomadas (tus preguntas, las opciones y lo que decidió Daniela), cómo se probó, errores encontrados y 3 a 5 preguntas de autoevaluación con respuesta. Define cada término nuevo en el glosario. Si un paso posterior cambia un archivo anterior, actualiza también la sección anterior. Un paso no está terminado hasta que su sección esté escrita. Plantilla completa en `PLAN.md`.
 
+## Flujo con subagentes (en `.claude/agents/`)
+Para ahorrar costo, el código lo escribe un subagente barato y otro lo revisa. Los subagentes NO pueden hacer preguntas a Daniela, por eso el agente principal (tú) hace todo el contacto con ella:
+1. **Tú preguntas primero.** Antes de delegar, resuelve con Daniela todas las decisiones del paso (pines, valores, estructura, nombres, orden). Nada se delega con decisiones abiertas.
+2. **`programador`** (modelo `haiku`) escribe el código siguiendo una especificación exacta que tú le das: archivos, funciones, registros y las decisiones ya tomadas. Si le falta un dato, devuelve "Preguntas pendientes" en vez de inventar.
+3. **`revisor`** (modelo `sonnet`) revisa el código contra las reglas y el manual, compila y corrige solo errores claros. Lo que dependa de una decisión lo devuelve como pregunta.
+4. **Tú** lees lo que devolvieron, preguntas a Daniela lo pendiente, y le explicas todo el código línea por línea, bloque por bloque. Luego escribes la sección del paso en `docs/GUIA_DE_ESTUDIO.md` y anotas en `AI_USO.md` qué modelo escribió, qué modelo revisó y qué se corrigió.
+5. Tú no confías ciegamente: compila y revisa que el código final sea el que le explicas. No pases al siguiente paso hasta que Daniela confirme que entendió y probó en la placa.
+Para cambiar un modelo, edita la línea `model:` del archivo del subagente (alias `haiku`, `sonnet`, `opus` o un ID completo).
+
 ## Reglas del curso
 - Cortex-M4 (NUCLEO-F446RE), toolchain GNU (arm-none-eabi-gcc), Makefile y linker script propios. Sin HAL, CMSIS ni IDE de vendor.
 - **Ningún driver que no sea nuestro.** La pantalla y el control se manejan escribiendo registros directamente (GPIO, RCC, TIM, SysTick, NVIC, USART). Los registros están definidos a mano en `inc/registros_f446.h` (estilo del ejemplo 4-custom-hal), con direcciones del manual RM0390. No usar librerías de pantallas HUB75 ni de joysticks.

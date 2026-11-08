@@ -13,7 +13,8 @@ Cada paso termina con una prueba visible y con preguntas que debes poder contest
 7. Solo conceptos vistos en clase: registros por dirección, structs de registros, `volatile`, SysTick, interrupciones con NVIC, timers, GPIO, UART. Si hay que usar algo nuevo, se explica y se pregunta antes de escribirlo.
 8. Cada paso compila sin advertencias y se prueba en la placa antes del siguiente. Daniela confirma que entendió antes de pasar al siguiente paso.
 9. Todo uso de IA se anota en `AI_USO.md` en el mismo commit en que entra el código.
-10. **Guía de estudio obligatoria.** Claude mantiene `docs/GUIA_DE_ESTUDIO.md`, un documento para que Daniela y su compañero estudien. Cada paso, modificación, archivo, bloque de código y corrección se explica ahí, en el mismo commit en que entra el código. No se da un paso por terminado si su sección de la guía no está escrita (ver "Guía de estudio" más abajo).
+10. **Flujo con subagentes.** El código lo escribe el subagente `programador` (modelo barato) y lo revisa y corrige el subagente `revisor`; los dos están definidos en `.claude/agents/`. Como los subagentes no pueden preguntarle a Daniela, el agente principal resuelve con ella todas las decisiones antes de delegar y es quien le explica el código. Detalle en `CLAUDE.md`.
+11. **Guía de estudio obligatoria.** Claude mantiene `docs/GUIA_DE_ESTUDIO.md`, un documento para que Daniela y su compañero estudien. Cada paso, modificación, archivo, bloque de código y corrección se explica ahí, en el mismo commit en que entra el código. No se da un paso por terminado si su sección de la guía no está escrita (ver "Guía de estudio" más abajo).
 
 ## Estructura del repositorio
 
