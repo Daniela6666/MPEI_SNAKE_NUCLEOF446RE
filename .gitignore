@@ -1,0 +1,12 @@
+# Archivos generados al compilar
+build/
+*.o
+*.elf
+*.bin
+*.map
+*.lst
+
+# Editor y sistema
+.vscode/
+*.swp
+.DS_Store
