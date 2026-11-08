@@ -6,6 +6,7 @@ Requisito 10 del curso: todo uso de IA debe quedar documentado (herramienta, pro
 |---|---|---|---|---|---|
 | 1 | 2026-10-19 a 2026-10-22 | Claude (chat) y Claude Code | Elegir la conexión del panel HUB75, diagnosticar por qué no encendía (filas del conector invertidas) y medir el mapeo de píxeles, en un repositorio anterior | Programas de prueba de pantalla (`PRUEBA PANTALLA`, repositorio anterior). No se reutiliza su código en este repositorio | Pendiente de completar |
 | 2 | 2026-11-08 | Claude (Cowork) | Analizar los ejemplos del profesor (carpeta NUCLEO-64), leer los PDFs del curso y armar el plan paso a paso | `PLAN.md`, `CLAUDE.md`, `README.md` y los documentos de `docs/`. No se generó código de firmware | Pendiente de completar |
+| 3 | 2026-11-08 | Claude Code (Sonnet 5.5) | Paso 1, pieza 1: revisar el entorno WSL2, probar el ejemplo `1-led-blink` del profesor como prueba de entorno y adaptar su Makefile a nuestro proyecto | `Makefile` y la sección del paso 1 de `docs/GUIA_DE_ESTUDIO.md`. Lo escribió y lo revisó el agente principal (Sonnet 5.5); no se usaron los subagentes `programador` ni `revisor` en esta pieza. Corrección: se quitaron `-fno-pic` y `--no-relax` tras comprobar que compila sin ellos | Pendiente de completar |
 
 Desde el paso 1 cada entrada indica además qué modelo escribió el código (`programador`), qué modelo lo revisó (`revisor`) y qué correcciones hizo.
 
