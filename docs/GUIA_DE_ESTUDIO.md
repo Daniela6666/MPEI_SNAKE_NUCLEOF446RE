@@ -8,6 +8,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Glosario](#glosario)
 - [Paso 0 — Repositorio y documentos](#paso-0--repositorio-y-documentos)
 - [Paso 1 — Compilar y grabar (linker, Makefile, crt0.S)](#paso-1--compilar-y-grabar-linker-makefile-crt0s)
+- [Paso 2 — Reloj a 84 MHz y base de tiempo SysTick](#paso-2--reloj-a-84-mhz-y-base-de-tiempo-systick)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -56,6 +57,21 @@ Cada término se define la primera vez que aparece, en una frase.
 | SP, `r0` a `r4` | SP es el puntero de pila; `r0` a `r12` son registros de uso general de la CPU. |
 | Literal pool | Zona de constantes que el ensamblador deja cerca del código para `ldr rX, =valor`. |
 | Bit Thumb | Bit 0 de una dirección de función en la tabla de vectores; debe valer 1 porque el Cortex-M solo ejecuta Thumb (por eso `Reset_Handler` en `0x080001e4` aparece como `0x080001e5`). |
+| HSI | Oscilador RC interno de 16 MHz con el que arranca el chip; no necesita cristal, pero su exactitud es de ~1 % a 25 °C (por verificar en el datasheet). |
+| PLL | Circuito que multiplica la frecuencia de un reloj: divide la entrada por `PLLM`, la multiplica por `PLLN` y divide la salida por `PLLP`. |
+| VCO | Oscilador controlado por voltaje, la parte del PLL que genera la frecuencia alta (aquí 336 MHz); debe quedar entre 100 y 432 MHz. |
+| `PLLM`, `PLLN`, `PLLP` | Campos de `RCC_PLLCFGR`: divisor de entrada, multiplicador del VCO y divisor de salida (código 01 = /4). |
+| Jitter | Variación pequeña del instante de los flancos de un reloj; el manual recomienda 2 MHz en la entrada del VCO para reducirlo. |
+| SYSCLK y HCLK | SYSCLK es el reloj del sistema; HCLK es el reloj del AHB (CPU, memoria y GPIO). Aquí los dos valen 84 MHz. |
+| AHB y APB | Buses internos: AHB es rápido (84 MHz); APB1 (42 MHz, máx. 45) y APB2 (84 MHz, máx. 90) llevan los periféricos más lentos. |
+| Estados de espera (wait states) | Ciclos extra que la FLASH necesita para entregar un dato cuando el reloj es rápido; `FLASH_ACR.LATENCY`. |
+| `RCC_CFGR.SW` y `SWS` | `SW` pide la fuente del reloj del sistema; `SWS` (solo lectura) indica la que el hardware usa de verdad. |
+| SysTick | Contador de 24 bits del núcleo Cortex-M4 que cuenta hacia abajo; sirve como base de tiempo. |
+| `LOAD` y `VAL` | `LOAD` es el valor desde el que SysTick recarga la cuenta; `VAL` es el valor actual. El periodo es `LOAD + 1` ciclos. |
+| `CTRL` de SysTick | Registro con `ENABLE` (bit 0), `TICKINT` (bit 1, interrupción al llegar a 0) y `CLKSOURCE` (bit 2, 1 = reloj del procesador). |
+| Excepción y NVIC | SysTick es una excepción del núcleo y no pasa por el NVIC; el NVIC (controlador de interrupciones) maneja las IRQ de los periféricos. |
+| Espera bloqueante | Espera en la que la CPU no hace otra cosa; en `esperar_milisegundos` solo la interrupción sigue contando. |
+| Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
 Cada paso nuevo copia esta estructura:
@@ -1019,6 +1035,8 @@ Fuera del repo, con el `Makefile`, el `linker_script.ld` y el `crt0.S` del repo,
 
 **Cómo se hizo:** el agente principal resolvió con Daniela las decisiones; el subagente `programador` (Haiku) escribió los cuatro archivos; el subagente `revisor` (Sonnet) los revisó y no cambió nada; el agente principal agregó `(void)lectura_descartada;` por decisión de Daniela, recompiló y grabó la placa.
 
+**Nota (política de la guía, opción a):** `inc/registros_f446.h` y `main.c` que aparecen abajo son las **versiones del Paso 1**. El Paso 2 los cambia: ver «Paso 2». `registros_f446.h` conserva todo lo de abajo y agrega registros; en `main.c` se quita el botón. Los demás archivos de la pieza no cambian.
+
 **Origen:** `gpio_config.c/.h` del ejemplo `24-ADC-1` y `stm32f401.h` del ejemplo `4-custom-hal` del profesor (struct de registros), `main.c` del ejemplo `3-input-butt` (con la lógica del botón invertida, ver abajo). Datos del RM0390: direcciones base, sección 2.2.2, tabla 1 (leída literal en una transcripción en línea, docs.dirba.io); desplazamientos de GPIO, sección 7.4, tabla 26, y bits de `RCC_AHB1ENR`, sección 6.3.10 (solo de un resumen de la transcripción, coinciden con los ejemplos del profesor). **Antes de sustentar conviene comprobar estas tablas en el PDF de ST.**
 
 #### Código explicado
@@ -1373,6 +1391,480 @@ int main(void)
    Para que el compilador no optimice ni elimine las lecturas y escrituras: el valor puede cambiar por fuera del programa (un pin) y cada acceso debe hacerse de verdad.
 6. ¿Qué hace cada parte de `(registro & ~(0x3U << (pin * 2U))) | (valor << (pin * 2U))`?
    El `&` con la máscara invertida borra los 2 bits del pin y deja los demás; el `|` con el valor desplazado escribe el valor nuevo en esos 2 bits.
+
+## Paso 2 — Reloj a 84 MHz y base de tiempo SysTick
+
+### Objetivo
+Subir el reloj del sistema de 16 MHz (HSI, el reloj con el que arranca el chip) a **84 MHz** usando el PLL, y tener una **base de tiempo de 1 ms** con SysTick para poder esperar tiempos exactos (`esperar_milisegundos`). Se prueba haciendo parpadear el LED PA5 a 1 Hz y midiendo 60 destellos con cronómetro.
+
+### Archivos creados o modificados
+- `inc/registros_f446.h` (modificado): se agregan `RegistrosFLASH`, `RegistrosSysTick`, los punteros `FLASH` y `SysTick`, y las constantes de posición y máscara de los campos que se usan. Los comentarios de `CIR`, `AHB1RSTR`, `AHB2RSTR`, `AHB3RSTR`, `APB1RSTR` y `APB2RSTR` pasan de «No se usa todavía (paso 2)» a «No se usa todavía».
+- `inc/system_config.h` (nuevo): constantes de frecuencia y declaración de las funciones.
+- `src/system_config.c` (nuevo): `configurar_reloj`, `iniciar_systick`, `SysTick_Handler` y `esperar_milisegundos`.
+- `main.c` (modificado): ya no configura el botón; hace parpadear el LED a 1 Hz con `esperar_milisegundos`.
+- La versión de `registros_f446.h` y de `main.c` del paso 1 se conserva en la pieza 4 del Paso 1, con una nota (decisión de Daniela, opción a).
+
+### Concepto de clase que se usa
+Reloj del sistema (RCC y PLL), estados de espera de la FLASH, SysTick, interrupciones y variables `volatile`. Los archivos `system_config.*` son los que `CLAUDE.md` lista como base del profesor (ejemplos 4, 7 y 24); aquí se reescribieron con nuestros structs y nombres, sin CMSIS.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela todas las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió los archivos; el subagente `revisor` (Sonnet) los revisó y solo cambió dos comentarios de fuente (los límites de 45 MHz y 90 MHz); el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** RM0390 secciones 3.4.1 (tabla 5, estados de espera), 3.8.1 (`FLASH_ACR`), 6.2 «Clocks», 6.3.1 (`RCC_CR`), 6.3.2 (`RCC_PLLCFGR`) y 6.3.3 (`RCC_CFGR`), leídas en una transcripción en línea (docs.dirba.io), **no en el PDF de ST**. Los bits de SysTick vienen del PM0214 (manual del núcleo Cortex-M4); el agente principal **no pudo verificar el número de sección** y en el código dice «por verificar por Daniela». Las direcciones y bits de SysTick, FLASH y RCC se compararon con `core_cm4.h` y `stm32f446xx.h` de STM32CubeF4 (carpeta hermana, solo como verificación; no se usan en el proyecto) y coinciden todas.
+**Antes de sustentar conviene comprobar estas tablas en el PDF del RM0390 y la sección de SysTick en el PM0214.**
+
+### Cálculo del PLL, paso a paso
+El PLL toma un reloj de entrada, lo divide, lo multiplica y lo vuelve a dividir. Fórmulas del RM0390, sección 6.3.2 (`RCC_PLLCFGR`):
+
+```
+f_entrada_VCO = f_fuente / PLLM
+f_VCO         = f_entrada_VCO × PLLN
+f_sistema     = f_VCO / PLLP
+```
+
+1. **Fuente.** `PLLSRC = 0` (valor tras el reset): la fuente es la HSI, **16 MHz**. Por eso no se escribe `PLLSRC`.
+2. **Divisor M.** Decisión de Daniela: `PLLM = 16`. Entrada del VCO = 16 MHz / 16 = **1 MHz**.
+   - El manual exige que la entrada del VCO esté entre **1 y 2 MHz**; 1 MHz es el mínimo permitido (con `PLLM = 17` ya serían 0,94 MHz, fuera de rango).
+   - El manual recomienda 2 MHz porque reduce el jitter (variación del instante de los flancos). Con `PLLM = 8` serían 2 MHz y `PLLN = 168` daría los mismos 84 MHz. Daniela decidió `PLLM = 16`; el resultado es el mismo para este proyecto.
+3. **Multiplicador N.** `PLLN = 336`. VCO = 1 MHz × 336 = **336 MHz**. El VCO debe quedar entre 100 y 432 MHz, y 336 está dentro.
+4. **Divisor P.** El campo `PLLP` es un código: `00` = /2, `01` = /4, `10` = /6, `11` = /8. Se escribe el código `01` (/4). Reloj del sistema = 336 MHz / 4 = **84 MHz**.
+5. **Buses derivados de los 84 MHz.**
+   - `HPRE = 0xxx` (sin división): AHB = HCLK = **84 MHz** (CPU, memoria y GPIO).
+   - `PPRE1 = 100` (/2): APB1 = **42 MHz** (máximo permitido: 45 MHz; sin el /2 serían 84 y se pasaría).
+   - `PPRE2 = 0xx` (sin división): APB2 = **84 MHz** (máximo permitido: 90 MHz).
+   - Regla del RM0390: cuando el divisor de un bus APB no es 1, los **timers** de ese bus reciben el doble. Por eso los timers de APB1 (TIM3) reciben 42 × 2 = **84 MHz**.
+6. **Estados de espera de la FLASH.** La FLASH no puede leer a 84 MHz sin esperar. Con VDD entre 2,7 y 3,6 V (la placa mide ~3,27 V), la tabla 5 (RM0390, 3.4.1) pide **2 estados de espera** para 60 < HCLK ≤ 90 MHz. Por eso `LATENCY = 2` y se escribe **antes** de subir la frecuencia.
+
+### Cálculo de `LOAD` (SysTick), paso a paso
+SysTick cuenta hacia abajo desde `LOAD` hasta 0, y al pasar de 0 recarga `LOAD`. Ese recorrido tiene `LOAD + 1` valores (incluye el 0), es decir, `LOAD + 1` ciclos del reloj.
+
+1. Se quiere una interrupción cada 1 ms, o sea 1000 por segundo.
+2. Ciclos por interrupción = 84 000 000 / 1000 = **84 000**.
+3. `LOAD + 1 = 84 000` → `LOAD = 84 000 − 1 =` **83 999** (`0x1481F`).
+4. Cabe en 24 bits (máximo 16 777 215).
+5. Comprobación: cada interrupción son 84 000 ciclos × (1 / 84 000 000 s) = 1 ms exacto. Con `LOAD = 84 000` serían 84 001 ciclos y cada «milisegundo» sería un poco más largo.
+
+### Código explicado
+
+`inc/registros_f446.h`
+
+```c
+#ifndef REGISTROS_F446_H
+#define REGISTROS_F446_H
+
+#include <stdint.h>
+
+// Direcciones base de los buses. Fuente: RM0390 (manual de referencia STM32F446),
+// sección 2.2.2, tabla 1 «STM32F446xx register boundary addresses».
+#define PERIFERICOS_BASE (0x40000000U)
+// Bus AHB1: aquí están los puertos GPIO y el RCC.
+#define AHB1_BASE (PERIFERICOS_BASE + 0x20000U)
+
+// Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
+// Puerto A de GPIO (0x40020000).
+#define GPIOA_BASE (AHB1_BASE)
+// Puerto C de GPIO (0x40020800).
+#define GPIOC_BASE (AHB1_BASE + 0x800U)
+// Controlador de reloj RCC (0x40023800).
+#define RCC_BASE (AHB1_BASE + 0x3800U)
+// Interfaz de la memoria FLASH (0x40023C00). Fuente: RM0390, sección 2.2.2, tabla 1, fila «Flash interface register».
+#define FLASH_BASE (AHB1_BASE + 0x3C00U)
+// Registros SysTick del núcleo Cortex-M4 (0xE000E010). Fuente: PM0214, sección «SysTick timer (STK)» (número de sección y tabla por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
+#define SYSTICK_BASE (0xE000E010U)
+
+// Mapa de los registros del puerto: cada campo está 4 bytes después del anterior,
+// por eso el orden no se puede cambiar. Fuente: RM0390, capítulo 7, sección 7.4, tabla 26.
+typedef struct {
+    // Desplazamiento 0x00. Modo de cada pin: 2 bits por pin (00 entrada, 01 salida, 10 alterna, 11 analógico).
+    volatile uint32_t MODER;
+    // Desplazamiento 0x04. Tipo de salida de cada pin: 1 bit por pin (0 push-pull, 1 open-drain).
+    volatile uint32_t OTYPER;
+    // Desplazamiento 0x08. Velocidad de cambio de cada pin: 2 bits por pin.
+    volatile uint32_t OSPEEDR;
+    // Desplazamiento 0x0C. Resistencia pull-up o pull-down de cada pin: 2 bits por pin.
+    volatile uint32_t PUPDR;
+    // Desplazamiento 0x10. Lectura del estado de los pines de entrada: 1 bit por pin.
+    volatile uint32_t IDR;
+    // Desplazamiento 0x14. Valor que se saca por cada pin de salida: 1 bit por pin.
+    volatile uint32_t ODR;
+    // Desplazamiento 0x18. Pone (bits 0 a 15) o borra (bits 16 a 31) bits de ODR de forma atómica.
+    volatile uint32_t BSRR;
+    // Desplazamiento 0x1C. Bloquea la configuración de los pines hasta el próximo reinicio.
+    volatile uint32_t LCKR;
+    // Desplazamiento 0x20. Función alterna de los pines 0 a 7: 4 bits por pin.
+    volatile uint32_t AFRL;
+    // Desplazamiento 0x24. Función alterna de los pines 8 a 15: 4 bits por pin.
+    volatile uint32_t AFRH;
+} RegistrosGPIO;
+
+// Mapa de los registros del RCC (reloj). Cada campo está en su desplazamiento del manual.
+// Fuente: RM0390, capítulo 6, sección 6.3, «RCC registers», mapa de registros.
+typedef struct {
+    // Desplazamiento 0x00. Control del reloj (HSI, HSE, PLL). Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CR;
+    // Desplazamiento 0x04. Configuración del PLL. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t PLLCFGR;
+    // Desplazamiento 0x08. Configuración del reloj del sistema y de los buses. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CFGR;
+    // Desplazamiento 0x0C. Interrupciones del reloj. No se usa todavía.
+    volatile uint32_t CIR;
+    // Desplazamiento 0x10. Reinicia los puertos AHB1. No se usa todavía.
+    volatile uint32_t AHB1RSTR;
+    // Desplazamiento 0x14. Reinicia los periféricos AHB2. No se usa todavía.
+    volatile uint32_t AHB2RSTR;
+    // Desplazamiento 0x18. Reinicia los periféricos AHB3. No se usa todavía.
+    volatile uint32_t AHB3RSTR;
+    // Desplazamiento 0x1C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_0;
+    // Desplazamiento 0x20. Reinicia los periféricos del bus APB1. No se usa todavía.
+    volatile uint32_t APB1RSTR;
+    // Desplazamiento 0x24. Reinicia los periféricos del bus APB2. No se usa todavía.
+    volatile uint32_t APB2RSTR;
+    // Desplazamientos 0x28 y 0x2C. Reservados por el fabricante, no se usan.
+    uint32_t RESERVADO_1[2];
+    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 2 = puerto C).
+    volatile uint32_t AHB1ENR;
+} RegistrosRCC;
+
+// Solo se define ACR: los demás registros de la FLASH no se usan todavía.
+typedef struct {
+    // Desplazamiento 0x00. Control de acceso a la FLASH: estados de espera (LATENCY, bits 3:0). Fuente: RM0390, sección 3.8.1.
+    volatile uint32_t ACR;
+} RegistrosFLASH;
+
+// Mapa de los registros de SysTick, mismo criterio que RegistrosGPIO.
+typedef struct {
+    // Desplazamiento 0x00. Control y estado: habilitar, interrupción y fuente de reloj (bits 0 a 2).
+    volatile uint32_t CTRL;
+    // Desplazamiento 0x04. Valor de recarga del contador, de 24 bits (bits 23:0).
+    volatile uint32_t LOAD;
+    // Desplazamiento 0x08. Valor actual del contador; escribir cualquier valor lo pone en 0.
+    volatile uint32_t VAL;
+    // Desplazamiento 0x0C. Calibración del contador. No se usa.
+    volatile uint32_t CALIB;
+} RegistrosSysTick;
+
+// Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
+// Cada puntero apunta a la dirección base del periférico.
+#define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
+// Puntero al puerto C de GPIO (botón azul PC13).
+#define GPIOC ((RegistrosGPIO *)GPIOC_BASE)
+// Puntero al controlador de reloj RCC.
+#define RCC ((RegistrosRCC *)RCC_BASE)
+// Puntero a la interfaz de la FLASH (se usa para FLASH->ACR).
+#define FLASH ((RegistrosFLASH *)FLASH_BASE)
+// Puntero a los registros de SysTick (se usa para SysTick->CTRL, LOAD y VAL).
+#define SysTick ((RegistrosSysTick *)SYSTICK_BASE)
+
+// Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOAEN (1U << 0)
+// Bit 2 de RCC_AHB1ENR: 1 enciende el reloj del puerto C. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOCEN (1U << 2)
+
+// Bit 24 de RCC_CR: 1 enciende el PLL. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLON (1U << 24)
+// Bit 25 de RCC_CR: 1 indica que el PLL ya enganchó y está listo. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLRDY (1U << 25)
+
+// Posición del campo PLLM (divisor de entrada del PLL) en RCC_PLLCFGR, bits 5:0. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_POSICION 0U
+// Máscara de los 6 bits de PLLM, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_MASCARA (0x3FU << RCC_PLLCFGR_PLLM_POSICION)
+// Posición del campo PLLN (multiplicador del VCO) en RCC_PLLCFGR, bits 14:6. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_POSICION 6U
+// Máscara de los 9 bits de PLLN, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_MASCARA (0x1FFU << RCC_PLLCFGR_PLLN_POSICION)
+// Posición del campo PLLP (divisor de salida del PLL) en RCC_PLLCFGR, bits 17:16. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_POSICION 16U
+// Máscara de los 2 bits de PLLP, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_MASCARA (0x3U << RCC_PLLCFGR_PLLP_POSICION)
+
+// Posición del campo SW (fuente del reloj del sistema) en RCC_CFGR, bits 1:0. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_POSICION 0U
+// Máscara de los 2 bits de SW, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_MASCARA (0x3U << RCC_CFGR_SW_POSICION)
+// Posición del campo SWS (fuente que el hardware está usando de verdad) en RCC_CFGR, bits 3:2. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_POSICION 2U
+// Máscara de los 2 bits de SWS, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_MASCARA (0x3U << RCC_CFGR_SWS_POSICION)
+// Posición del campo HPRE (divisor del AHB) en RCC_CFGR, bits 7:4. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_POSICION 4U
+// Máscara de los 4 bits de HPRE, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_MASCARA (0xFU << RCC_CFGR_HPRE_POSICION)
+// Posición del campo PPRE1 (divisor del APB1) en RCC_CFGR, bits 12:10. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_POSICION 10U
+// Máscara de los 3 bits de PPRE1, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_MASCARA (0x7U << RCC_CFGR_PPRE1_POSICION)
+// Posición del campo PPRE2 (divisor del APB2) en RCC_CFGR, bits 15:13. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_POSICION 13U
+// Máscara de los 3 bits de PPRE2, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_MASCARA (0x7U << RCC_CFGR_PPRE2_POSICION)
+
+// Posición del campo LATENCY (estados de espera de la FLASH) en FLASH_ACR, bits 3:0. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_POSICION 0U
+// Máscara de los 4 bits de LATENCY, ya desplazada a su posición. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_MASCARA (0xFU << FLASH_ACR_LATENCY_POSICION)
+
+// Bit 0 de SysTick CTRL: 1 enciende el contador. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_ENABLE (1U << 0)
+// Bit 1 de SysTick CTRL: 1 genera la interrupción al llegar el contador a 0. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_TICKINT (1U << 1)
+// Bit 2 de SysTick CTRL: 1 usa el reloj del procesador, 0 usa AHB/8. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_CLKSOURCE (1U << 2)
+
+#endif
+```
+
+Lo que **ya existía** (direcciones base, `RegistrosGPIO`, `RegistrosRCC`, punteros y `GPIOAEN`/`GPIOCEN`) está explicado en la pieza 4 del Paso 1. Lo **nuevo**:
+- `FLASH_BASE` = `AHB1_BASE + 0x3C00` = `0x40023C00` (RM0390, 2.2.2, tabla 1, fila «Flash interface register»).
+- `SYSTICK_BASE` = `0xE000E010`. Está en la región del núcleo (PPB, `0xE0000000` en adelante), no en un bus del fabricante; por eso la fuente es el PM0214 y no el RM0390.
+- `RegistrosFLASH`: solo `ACR` (desplazamiento `0x00`), el único registro de la FLASH que usamos. `LATENCY` son los bits 3:0.
+- `RegistrosSysTick`: `CTRL` (`0x00`), `LOAD` (`0x04`), `VAL` (`0x08`) y `CALIB` (`0x0C`, no se usa). Mismo criterio que `RegistrosGPIO`: cada campo, 4 bytes después del anterior.
+- Punteros `FLASH` y `SysTick`: se usan como `FLASH->ACR` y `SysTick->LOAD`.
+- `RCC_CR_PLLON` (bit 24) y `RCC_CR_PLLRDY` (bit 25): encender el PLL y saber que ya enganchó.
+- Para cada campo hay `_POSICION` (dónde empieza) y `_MASCARA` (unos en todos sus bits, ya desplazados). Ejemplo: `PLLN` ocupa los bits 14:6 (9 bits), posición 6 y máscara `0x1FF << 6`. Las máscaras tienen **paréntesis**, para que `~RCC_PLLCFGR_PLLN_MASCARA` invierta toda la máscara y no solo `0x1FF` (el error de los paréntesis del Paso 1).
+- Campos usados: `PLLM` (5:0), `PLLN` (14:6), `PLLP` (17:16), `SW` (1:0), `SWS` (3:2), `HPRE` (7:4), `PPRE1` (12:10), `PPRE2` (15:13) y `LATENCY` (3:0).
+- Bits de `SysTick->CTRL`: `ENABLE` (bit 0), `TICKINT` (bit 1) y `CLKSOURCE` (bit 2).
+
+`inc/system_config.h`
+
+```c
+#ifndef SYSTEM_CONFIG_H
+#define SYSTEM_CONFIG_H
+
+#include "registros_f446.h"
+
+// Frecuencia del reloj del sistema (SYSCLK y HCLK) después de configurar_reloj: 84 MHz.
+#define FRECUENCIA_RELOJ_HZ 84000000U
+// Interrupciones de SysTick por segundo: 1000 = una interrupción por milisegundo (base de tiempo de 1 ms).
+#define INTERRUPCIONES_SYSTICK_POR_SEGUNDO 1000U
+
+// Configura el PLL a 84 MHz, la latencia de la FLASH y los divisores de los buses. Se llama antes que cualquier periférico.
+void configurar_reloj(void);
+// Enciende SysTick para que interrumpa cada 1 ms (base de tiempo).
+void iniciar_systick(void);
+// Espera la cantidad de milisegundos indicada. Mientras espera, la interrupción de SysTick sigue contando.
+void esperar_milisegundos(uint32_t milisegundos);
+
+#endif
+```
+
+- Las dos constantes son la fuente única de los 84 MHz y de los 1000 ticks por segundo; `iniciar_systick` las usa para calcular `LOAD`.
+- Las tres declaraciones son las funciones públicas. `SysTick_Handler` no se declara aquí: el nombre lo usa la tabla de vectores, no se llama desde C.
+
+`src/system_config.c`
+
+```c
+#include "system_config.h"
+
+// Estados de espera de la FLASH (LATENCY = 2). Con VDD de 2.7 a 3.6 V, 2 estados de espera son necesarios para 60 < HCLK ≤ 90 MHz. Fuente: RM0390, sección 3.4.1, tabla 5 «Number of wait states according to CPU clock (HCLK) frequency».
+#define FLASH_ESTADOS_DE_ESPERA 2U
+// Divisor M del PLL: 16 MHz de la HSI / 16 = 1 MHz, que es la entrada del VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_DIVISOR_ENTRADA_M 16U
+// Multiplicador N del PLL: 1 MHz × 336 = 336 MHz en el VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_MULTIPLICADOR_N 336U
+// Código del divisor P del PLL: 01 = dividir entre 4, 336 MHz / 4 = 84 MHz. Fuente: RM0390, sección 6.3.2 (00 = /2, 01 = /4, 10 = /6, 11 = /8).
+#define PLL_CODIGO_DIVISOR_SALIDA_P 1U
+// Código HPRE = 0xxx: el AHB no se divide, HCLK = SYSCLK = 84 MHz. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, HPRE).
+#define AHB_SIN_DIVISION 0U
+// Código PPRE1 = 100: el APB1 se divide entre 2, APB1 = 42 MHz (el máximo permitido es 45 MHz). Fuente: máximo de 45 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE1).
+#define APB1_DIVIDIR_ENTRE_2 4U
+// Código PPRE2 = 0xx: el APB2 no se divide, APB2 = 84 MHz (el máximo permitido es 90 MHz). Fuente: máximo de 90 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE2).
+#define APB2_SIN_DIVISION 0U
+// Código SW y SWS = 10: el PLL es la fuente del reloj del sistema. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, SW y SWS).
+#define RELOJ_SISTEMA_PLL 2U
+
+// Cuenta milisegundos desde el arranque. Es volatile porque la interrupción la cambia sin que main lo sepa.
+// Es static porque solo este archivo la usa.
+static volatile uint32_t contador_milisegundos = 0U;
+
+void configurar_reloj(void)
+{
+    // Se escribe solo el campo LATENCY: la máscara va entre paréntesis en su definición para que ~ afecte solo a esos bits, y no se sobrescribe FLASH->ACR completo.
+    // Primero la latencia de la FLASH, porque la FLASH es más lenta que 84 MHz y debe esperar más ciclos antes de subir la frecuencia.
+    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY_MASCARA) | (FLASH_ESTADOS_DE_ESPERA << FLASH_ACR_LATENCY_POSICION);
+    // El manual (RM0390, sección 3.4.1) recomienda releer LATENCY y esperar a que quede escrito antes de cambiar el reloj.
+    while (((FLASH->ACR & FLASH_ACR_LATENCY_MASCARA) >> FLASH_ACR_LATENCY_POSICION) != FLASH_ESTADOS_DE_ESPERA) { }
+
+    // PLLSRC queda en 0 (HSI de 16 MHz, valor tras el reset). PLLQ y PLLR no se tocan y conservan su valor de reset.
+    // El PLL está apagado, por eso se puede escribir PLLCFGR. Solo se escriben los campos PLLM, PLLN y PLLP, no el registro completo.
+    // Campo PLLM: divisor de entrada del PLL.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLM_MASCARA) | (PLL_DIVISOR_ENTRADA_M << RCC_PLLCFGR_PLLM_POSICION);
+    // Campo PLLN: multiplicador del VCO.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLN_MASCARA) | (PLL_MULTIPLICADOR_N << RCC_PLLCFGR_PLLN_POSICION);
+    // Campo PLLP: divisor de salida del PLL que da el reloj del sistema.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLP_MASCARA) | (PLL_CODIGO_DIVISOR_SALIDA_P << RCC_PLLCFGR_PLLP_POSICION);
+
+    // Divisores de los buses, antes de subir la frecuencia para que ningún bus pase de su máximo.
+    // Campo HPRE: divisor del AHB.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_HPRE_MASCARA) | (AHB_SIN_DIVISION << RCC_CFGR_HPRE_POSICION);
+    // Campo PPRE1: divisor del APB1 (42 MHz; TIM3 recibirá 84 MHz).
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE1_MASCARA) | (APB1_DIVIDIR_ENTRE_2 << RCC_CFGR_PPRE1_POSICION);
+    // Campo PPRE2: divisor del APB2.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE2_MASCARA) | (APB2_SIN_DIVISION << RCC_CFGR_PPRE2_POSICION);
+
+    // Se enciende el PLL con |= para no cambiar los demás bits de CR.
+    RCC->CR |= RCC_CR_PLLON;
+    // Se espera a que el PLL enganche: PLLRDY = 1 indica que el PLL está listo.
+    while ((RCC->CR & RCC_CR_PLLRDY) == 0U) { }
+
+    // Campo SW: se elige el PLL como fuente del reloj del sistema.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_MASCARA) | (RELOJ_SISTEMA_PLL << RCC_CFGR_SW_POSICION);
+    // Se espera a que el hardware confirme el cambio: SWS muestra la fuente que está usando de verdad.
+    while ((RCC->CFGR & RCC_CFGR_SWS_MASCARA) != (RELOJ_SISTEMA_PLL << RCC_CFGR_SWS_POSICION)) { }
+}
+
+void iniciar_systick(void)
+{
+    // Se apaga el contador mientras se configura: ENABLE = 0 detiene la cuenta.
+    SysTick->CTRL &= ~SYSTICK_CTRL_ENABLE;
+    // 84 000 000 / 1000 = 84 000 ciclos por milisegundo. El contador cuenta desde LOAD hasta 0, o sea LOAD + 1 ciclos, por eso se resta 1.
+    // LOAD = 83 999: cabe en los 24 bits (máximo 16 777 215).
+    SysTick->LOAD = (FRECUENCIA_RELOJ_HZ / INTERRUPCIONES_SYSTICK_POR_SEGUNDO) - 1U;
+    // Se pone el contador en 0 para que empiece desde LOAD en la primera cuenta.
+    SysTick->VAL = 0U;
+    // CLKSOURCE = 1: el contador usa el reloj del procesador (84 MHz), no AHB/8.
+    SysTick->CTRL |= SYSTICK_CTRL_CLKSOURCE;
+    // TICKINT = 1: al llegar a 0 se genera la interrupción. SysTick es una excepción del núcleo y no necesita habilitarse en el NVIC.
+    SysTick->CTRL |= SYSTICK_CTRL_TICKINT;
+    // ENABLE = 1: se enciende el contador al final, cuando ya está todo configurado.
+    SysTick->CTRL |= SYSTICK_CTRL_ENABLE;
+}
+
+// El nombre es el de la tabla de vectores de crt0.S (posición 0x3C). Al definirla aquí reemplaza al alias débil que apunta a Default_Handler.
+// Se ejecuta cada 1 ms.
+void SysTick_Handler(void)
+{
+    // Suma 1 milisegundo al contador.
+    contador_milisegundos++;
+}
+
+void esperar_milisegundos(uint32_t milisegundos)
+{
+    // Se guarda el instante en que empieza la espera.
+    uint32_t instante_inicial = contador_milisegundos;
+    // La resta funciona aunque el contador de 32 bits dé la vuelta. main espera aquí y la interrupción sigue contando.
+    while ((contador_milisegundos - instante_inicial) < milisegundos) { }
+}
+```
+
+**Constantes del principio (líneas 3 a 18).** Cada valor tiene nombre y su fuente: `FLASH_ESTADOS_DE_ESPERA` = 2, `PLL_DIVISOR_ENTRADA_M` = 16, `PLL_MULTIPLICADOR_N` = 336, `PLL_CODIGO_DIVISOR_SALIDA_P` = 1 (el código `01`, no el divisor 4), `AHB_SIN_DIVISION` = 0, `APB1_DIVIDIR_ENTRE_2` = 4 (código `100`), `APB2_SIN_DIVISION` = 0 y `RELOJ_SISTEMA_PLL` = 2 (código `10`).
+
+**`contador_milisegundos`.** `uint32_t` cuenta ~49,7 días antes de dar la vuelta. `volatile` porque lo cambia la interrupción y, sin él, el compilador podría leerlo una vez y hacer infinito el bucle de espera. `static` porque solo este archivo la usa.
+
+**`configurar_reloj`, en este orden y por qué:**
+1. **Latencia de la FLASH = 2** (primero). Se escribe solo el campo `LATENCY` con `(ACR & ~MASCARA) | (2 << POSICION)` y se relee hasta que valga 2, como recomienda el RM0390 (3.4.1). Si se subiera la frecuencia antes, la FLASH leería mal.
+2. **Campos del PLL** (`PLLM`, `PLLN`, `PLLP`), uno por línea y con el PLL **apagado** (tras el reset lo está). No se escribe `PLLCFGR` completo para no pisar `PLLR` ni `PLLQ`, que conservan su valor de reset; `PLLSRC` queda en 0 (HSI).
+3. **Divisores de los buses** (`HPRE`, `PPRE1`, `PPRE2`), todavía a 16 MHz, para que ningún bus supere su máximo cuando suba la frecuencia.
+4. **Encender el PLL**: `RCC->CR |= RCC_CR_PLLON`. Se usa `|=` para no apagar la HSI (bit 0 de `CR`), que sigue siendo el reloj en uso.
+5. **Esperar `PLLRDY`**: el bucle vacío repite mientras el bit 25 valga 0.
+6. **Elegir el PLL**: se escribe `SW = 2`. Es lo que se **pide**.
+7. **Esperar `SWS`**: `SWS` (bits 3:2) es lo que el hardware **usa de verdad**. Se compara con `RELOJ_SISTEMA_PLL << RCC_CFGR_SWS_POSICION` (2 << 2 = 8), porque el campo está en los bits 3:2. Al salir, el chip corre a 84 MHz.
+
+No hay límite de tiempo en los bucles de espera: si el PLL no enganchara, el programa se quedaría esperando. Con el oscilador interno es muy improbable y agregar un límite es código que no se pidió.
+
+**`iniciar_systick`:**
+1. `CTRL &= ~ENABLE`: apaga el contador mientras se configura.
+2. `LOAD = (84 000 000 / 1000) − 1` = 83 999 (cálculo de arriba).
+3. `VAL = 0`: limpia la cuenta actual.
+4. `CLKSOURCE = 1`: usa el reloj del procesador (84 MHz); con 0 usaría AHB/8 y el cálculo no valdría.
+5. `TICKINT = 1`: al llegar a 0 se produce la excepción. SysTick es una excepción del núcleo (número 15, posición `0x3C` de la tabla de vectores): **no se habilita en el NVIC** ni necesita bit en RCC (no se copió el `SYSCFGEN` del ejemplo del profesor).
+6. `ENABLE = 1`: al final, cuando todo está listo.
+
+**`SysTick_Handler`.** El nombre debe ser exactamente el de `crt0.S`. Al definirla, reemplaza al alias débil que apuntaba a `Default_Handler`. En la placa se comprobó que el vector `0x3C` contiene `0x080004F9` (= `SysTick_Handler` en `0x080004F8` con el bit Thumb). No hay que limpiar ningún flag: el hardware limpia la solicitud al entrar. Solo suma 1 a `contador_milisegundos`.
+
+**`esperar_milisegundos`.** Guarda `instante_inicial` y repite mientras `(contador − instante_inicial) < milisegundos`. Con enteros sin signo la resta da el resultado correcto aunque el contador dé la vuelta (si `inicial = 0xFFFFFFFF` y luego `contador = 1`, la resta es 2). Es una espera **bloqueante**: la CPU solo espera, la interrupción sigue contando. El error es de hasta 1 ms, porque el instante inicial cae a mitad de un milisegundo.
+
+`main.c`
+
+```c
+#include "registros_f446.h"
+#include "gpio_config.h"
+#include "system_config.h"
+
+// Número del pin del LED de la placa (PA5).
+#define PIN_LED 5U
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick).
+    iniciar_systick();
+
+    // Configuración del LED de la placa (PA5).
+    ConfiguracionPin configuracion_led;
+    // El LED es una salida.
+    configuracion_led.modo = MODO_SALIDA;
+    // Número del pin del LED.
+    configuracion_led.pin = PIN_LED;
+    // Sin pull-up ni pull-down en el LED.
+    configuracion_led.resistencia = RESISTENCIA_NINGUNA;
+    // Velocidad baja.
+    configuracion_led.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_led.funcion_alterna = 0U;
+    // Se escribe la configuración del LED en el puerto A.
+    configurar_pin(GPIOA, configuracion_led);
+
+    while (1) {
+        // Se invierte el LED y se espera 500 ms: 500 ms encendido y 500 ms apagado = 1 Hz.
+        invertir_pin(GPIOA, PIN_LED);
+        esperar_milisegundos(500U);
+    }
+}
+```
+
+- `configurar_reloj()` primero, porque todo lo posterior supone 84 MHz; después `iniciar_systick()`.
+- La configuración del LED PA5 es la misma del Paso 1 (`configurar_pin` habilita el reloj de GPIOA por dentro).
+- En el bucle, `invertir_pin` y esperar 500 ms: 500 ms encendido + 500 ms apagado = periodo de 1 s = **1 Hz**.
+- Se quitó la configuración del botón PC13: este paso solo prueba el reloj.
+
+### Modificaciones y correcciones
+- `registros_f446.h` crece con los registros nuevos y cambia seis comentarios (ver arriba). `main.c` ya no tiene botón (la versión del Paso 1 queda en su pieza 4).
+- El `revisor` cambió solo los comentarios de fuente de los límites de 45 MHz (APB1) y 90 MHz (APB2): ahora dicen «RM0390 sección 6.2 «Clocks»; código del campo en 6.3.3», porque la 6.3.3 solo da el código del campo y el límite está en la 6.2.
+- El `revisor` comprobó con `offsetof` y `_Static_assert` los desplazamientos de los structs, todas las constantes contra los encabezados de STM32CubeF4, la secuencia de `configurar_reloj` y el desensamblado (`LOAD = 0x1481F`, base `0x40023C00`).
+- Diferencias con el profesor: no se escribe `PLLCFGR` completo, no se habilita `SYSCFGEN`, los campos se escriben sin `WRITE_REG_FIELD` (con `~( ... )` entre paréntesis) y los nombres están en español.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Estados de espera de la FLASH | Según la tabla 5 del RM0390 | 2 (2,7 a 3,6 V; la placa mide ~3,27 V) |
+| Qué campos del PLL escribir | Todo `PLLCFGR` o solo los campos que se usan | Solo `PLLM`, `PLLN` y `PLLP`; `PLLQ`, `PLLR` y `PLLSRC` no se escriben |
+| Valores del PLL | Por ejemplo M = 8, N = 168 o M = 16, N = 336 | M = 16, N = 336, P código 01 (/4) |
+| Divisores de los buses | Varios | AHB sin dividir, APB1 /2, APB2 sin dividir |
+| Constantes de los campos | Un valor mezclado o posición y máscara por campo | Posición y máscara entre paréntesis, un campo por línea |
+| Base de tiempo | Varias | SysTick con interrupción cada 1 ms, reloj del procesador |
+| Contador y espera | Varias | `contador_milisegundos` y `esperar_milisegundos`; los temporizadores por software se ven en el paso 7 |
+| Prueba | Varias | LED a 1 Hz y 60 destellos con cronómetro |
+| Política de la guía | (a) conservar en el Paso 1 la versión original con una nota, o (b) reemplazar por la versión actual | (a) |
+| Comentarios «No se usa todavía (paso 2)» | Dejarlos o cambiarlos | Cambiarlos a «No se usa todavía» |
+
+Decisiones menores que tomó el agente principal y que Daniela puede objetar: releer `LATENCY` (viene del RM0390, 3.4.1), `static` en el contador, no escribir `PLLSRC`, y `main` sin botón.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 1422`, `data 0`, `bss 6`.
+- `make flash`: `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`; voltaje medido: 3,2656 V.
+- `nm`: `main = 0x080001c4`, `configurar_reloj = 0x080003e0`, `iniciar_systick = 0x080004a8`, `SysTick_Handler = 0x080004f8`, `esperar_milisegundos = 0x08000514`, `contador_milisegundos = 0x20000000`; vector `0x3C` = `0x080004f9`.
+- En la placa (2026-11-09): el LED parpadea de forma estable; **60 destellos en 58,03 s**.
+
+**Cómo interpretar la medida.** Con un reloj equivocado el resultado sería muy distinto: 16 MHz con el `LOAD` de 84 MHz daría unos 5 min, y un `LOAD` mal calculado daría un parpadeo mucho más rápido o lento. 58,03 s confirma que el PLL, `LOAD` y la interrupción funcionan. Pero la diferencia con 60 s es de **−3,3 %** (el reloj corre ~3 % más rápido), más que el ±1 % que se esperaba de la HSI. Posibles causas, sin comprobar: (1) la HSI es un oscilador RC y, según lo que recuerda el agente principal, su ±1 % es a 25 °C y puede ser mayor con otra temperatura (**por verificar en el datasheet del F446**); (2) error de cronometraje o de conteo de ±1 destello (~1 s, 1,7 %). Para saber más: repetir con 120 destellos. No bloquea el paso, pero **conviene vigilarlo en el paso 3 (USART a 115200)**, porque la UART tolera poco error de reloj.
+
+### Errores encontrados y cómo se resolvieron
+- Compilación: sin errores ni advertencias desde la primera vez.
+- Un comentario del código decía que los límites de 45 y 90 MHz salían de la sección 6.3.3; el `revisor` lo corrigió a 6.2 (ver arriba).
+- Medición de 58,03 s en lugar de ~60 s: pendiente de entender mejor (ver «Cómo interpretar la medida»).
+
+### Preguntas de autoevaluación
+1. ¿Por qué se escribe la latencia de la FLASH **antes** de cambiar al PLL?
+   Porque a 84 MHz la FLASH necesita 2 estados de espera para leer bien (RM0390, tabla 5); si se sube la frecuencia con 0 estados, el procesador leería instrucciones mal y se bloquearía.
+2. ¿Por qué `LOAD` vale 83 999 y no 84 000?
+   Porque SysTick cuenta de `LOAD` hasta 0 incluido, que son `LOAD + 1` ciclos; para 84 000 ciclos (1 ms a 84 MHz) hace falta `LOAD = 83 999`.
+3. ¿Por qué después de escribir `SW` se espera a que `SWS` valga 2 (comparado como `2 << 2`)?
+   `SW` es la petición y `SWS` es la fuente que el hardware ya está usando; el cambio no es instantáneo. El campo `SWS` está en los bits 3:2, por eso el 2 se desplaza 2 posiciones.
+4. ¿Qué pasaría si `contador_milisegundos` no fuera `volatile`?
+   El compilador podría leerlo una sola vez y guardarlo en un registro de la CPU, porque en `main` nadie lo cambia; `esperar_milisegundos` no terminaría nunca, ya que la interrupción sí lo cambia pero el bucle no lo vería.
+5. ¿Por qué `(contador − instante_inicial) < milisegundos` sigue funcionando cuando el contador de 32 bits da la vuelta?
+   Porque con enteros sin signo la resta es módulo 2³²: si `inicial = 0xFFFFFFFF` y `contador = 1`, la resta da 2, que son los milisegundos reales transcurridos.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
