@@ -53,6 +53,14 @@
 #define COLOR_VERDE 2U
 // Color azul: solo el bit B (bit 2) en 1.
 #define COLOR_AZUL 4U
+// Color amarillo: bits R (bit 0) y G (bit 1) en 1, es decir, rojo + verde.
+#define COLOR_AMARILLO 3U
+// Color magenta: bits R (bit 0) y B (bit 2) en 1, es decir, rojo + azul.
+#define COLOR_MAGENTA 5U
+// Color cian: bits G (bit 1) y B (bit 2) en 1, es decir, verde + azul.
+#define COLOR_CIAN 6U
+// Color blanco: los tres bits R, G y B en 1.
+#define COLOR_BLANCO 7U
 
 // Nivel de OE que enciende el panel: 0 (OE activo en bajo). Confirmado en la placa (2026-11-09).
 // Si otro panel no enciende, se intercambian este valor y NIVEL_OE_APAGADO.
@@ -64,7 +72,7 @@
 void configurar_panel(void);
 // Enciende TIM3 para que interrumpa cada 1 ms y el panel se refresque solo.
 void iniciar_refresco_panel(void);
-// Guarda el color (COLOR_NEGRO, COLOR_ROJO, COLOR_VERDE o COLOR_AZUL) del píxel (x, y) en el framebuffer.
+// Guarda el color (uno de los COLOR_*) del píxel (x, y) en el framebuffer.
 void encender_pixel(uint32_t x, uint32_t y, uint32_t color);
 
 #endif

@@ -12,6 +12,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 3 — Botones del shield (entradas con pull-up)](#paso-3--botones-del-shield-entradas-con-pull-up)
 - [Paso 4 — Primer píxel con GPIO](#paso-4--primer-píxel-con-gpio)
 - [Paso 5 — Framebuffer y refresco del panel con TIM3](#paso-5--framebuffer-y-refresco-del-panel-con-tim3)
+- [Paso 6 — Biblioteca gráfica mínima](#paso-6--biblioteca-gráfica-mínima)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -96,6 +97,10 @@ Cada término se define la primera vez que aparece, en una frase.
 | `ISER0` (NVIC) | Registro que habilita las interrupciones 0 a 31: escribir 1 en el bit `n` habilita la interrupción `n`. |
 | Registro con «sombra» | Registro cuyo valor escrito solo se aplica en la siguiente actualización (como `PSC`). |
 | Condición de carrera | Error posible cuando `main` y una interrupción usan el mismo dato a la vez; aquí solo produce un cuadro a medias. |
+| Color de 3 bits (RGB) | Un píxel guarda un bit por color primario (R = 1, G = 2, B = 4); sumar bits mezcla colores y da 8 valores (negro y 7 colores). |
+| Fuente de mapa de bits | Dibujos de las letras o dígitos guardados como bits (aquí 3x5, un byte por fila). |
+| Literal binario (`0b…`) | Número escrito en binario en el código, por ejemplo `0b101`; es una extensión de GCC, no C estándar. |
+| Dibujo transparente | Dibujo que solo enciende sus píxeles y no apaga los demás, por lo que hay que borrar antes de redibujar. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -2883,6 +2888,7 @@ Dejar de enviar la imagen una sola vez (Paso 4) y refrescar el panel de forma au
 - `inc/panel.h` (modificado): tamaño del tablero, constantes de la fórmula de mapeo, colores y las declaraciones de `iniciar_refresco_panel` y `encender_pixel`. Se quita `enviar_fase_con_un_bit`.
 - `src/panel.c` (modificado): framebuffer, `dibujar_fase`, `encender_pixel`, `iniciar_refresco_panel` y `TIM3_IRQHandler`.
 - `main.c` (reescrito): cuatro funciones de dibujo y la secuencia de pruebas. Las versiones anteriores de estos archivos quedan en los pasos 1 a 4, con notas.
+- El Paso 6 cambia después `panel.h` y reescribe `main.c`: los que aparecen en esta sección son las **versiones del Paso 5**.
 
 ### Concepto de clase que se usa
 Temporizador de propósito general (TIM3: prescaler, auto-recarga y evento de actualización), interrupciones con el NVIC, `volatile` en un dato compartido entre `main` y la interrupción, y la separación entre quien dibuja (la interrupción refresca el panel) y quien decide qué se dibuja (`main`).
@@ -3596,6 +3602,406 @@ Decisiones menores del agente principal o del `programador` que Daniela puede ob
    `bloque = 25 / 16 = 1` y `j = 25 % 16 = 9`; como `j ≥ 8`: `x = 8·1 + (9 − 8) = 9` e `y = fase + 4 = 6`. El color de abajo viene de la fila `y + 8 = 14`.
 5. ¿Por qué el framebuffer es `volatile` y qué se ve si `main` lo cambia mientras la interrupción dibuja?
    Porque lo escribe `main` y lo lee la interrupción, y el compilador no debe guardar copias de sus valores. Cada píxel es un byte, así que no se corrompe, pero puede verse un cuadro a medias (un parpadeo breve) hasta que `main` termina de escribir.
+
+## Paso 6 — Biblioteca gráfica mínima
+
+### Objetivo
+Tener funciones para dibujar sobre el framebuffer sin tocar el hardware: borrar la pantalla, usar los 7 colores, dibujar el contorno de un rectángulo y dibujar un dígito de 0 a 9 con una fuente propia de 3×5. Se prueba con dos pantallas: un marco con los diez dígitos y siete rectángulos de los siete colores.
+
+### Archivos creados o modificados
+- `inc/graficos.h` y `src/graficos.c` (nuevos): `borrar_pantalla`, `dibujar_rectangulo`, `dibujar_digito` y la fuente `fuente_digitos`.
+- `inc/panel.h` (modificado): cuatro colores nuevos (`COLOR_AMARILLO`, `COLOR_MAGENTA`, `COLOR_CIAN`, `COLOR_BLANCO`) y el comentario de `encender_pixel`.
+- `main.c` (reescrito): las dos pantallas de prueba. Las pruebas del Paso 5 (`rellenar_parcial`, `dibujar_marco`, `dibujar_diagonales`) y `limpiar_pantalla` se eliminan de `main.c`; quedan en la guía del Paso 5.
+- `src/panel.c` no cambia: «poner un píxel con 7 colores» es `encender_pixel`, que ya aceptaba cualquier valor de 3 bits.
+
+### Concepto de clase que se usa
+Arreglos constantes en FLASH (`const`, `.rodata`), operaciones de bits (desplazar y enmascarar) y capas de software: `panel.c` maneja el hardware y el framebuffer, y `graficos.c` solo dibuja sobre el framebuffer a través de `encender_pixel`.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó con un simulador de PC y no cambió nada; el agente principal leyó todo, recompiló y grabó la placa, y cambió un comentario por decisión de Daniela.
+
+**Fuentes:** no hay datos del RM0390 en este paso. Los dibujos de los dígitos son una fuente propia del proyecto, definida por Daniela.
+
+### Cómo se guarda un color en 3 bits
+Cada píxel del framebuffer es un byte, pero solo se usan 3 bits: uno por cada color primario del panel.
+
+| Bit | Valor | Color primario |
+|---|---|---|
+| 0 | 1 | Rojo (R) |
+| 1 | 2 | Verde (G) |
+| 2 | 4 | Azul (B) |
+
+Con 3 bits hay 2³ = 8 combinaciones: el negro (0, todo apagado) y 7 colores. Los colores compuestos son la suma de los bits:
+
+| Color | R | G | B | Valor |
+|---|---|---|---|---|
+| Negro | 0 | 0 | 0 | 0 |
+| Rojo | 1 | 0 | 0 | 1 |
+| Verde | 0 | 1 | 0 | 2 |
+| Amarillo (rojo + verde) | 1 | 1 | 0 | 3 |
+| Azul | 0 | 0 | 1 | 4 |
+| Magenta (rojo + azul) | 1 | 0 | 1 | 5 |
+| Cian (verde + azul) | 0 | 1 | 1 | 6 |
+| Blanco | 1 | 1 | 1 | 7 |
+
+Este orden es el mismo de `datos` en `dibujar_fase` (R1, G1 y B1 en los bits 0 a 2), por eso el color de arriba se pasa tal cual al panel y el de abajo se desplaza 3 bits.
+
+### Código explicado
+
+`inc/panel.h`
+
+```c
+#ifndef PANEL_H
+#define PANEL_H
+
+#include "gpio_config.h"
+
+// Pin R1 del panel (HUB75 pin 1), conectado a PC0. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R1 0U
+// Pin G1 del panel (HUB75 pin 2), conectado a PC1. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G1 1U
+// Pin B1 del panel (HUB75 pin 3), conectado a PC2. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B1 2U
+// Pin R2 del panel (HUB75 pin 5), conectado a PC3. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R2 3U
+// Pin G2 del panel (HUB75 pin 6), conectado a PC4. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G2 4U
+// Pin B2 del panel (HUB75 pin 7), conectado a PC5. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B2 5U
+// Pin OE del panel (HUB75 pin 15), conectado a PC6. Fuente: docs/conexiones.md.
+#define PIN_PANEL_OE 6U
+// Pin LAT del panel (HUB75 pin 14), conectado a PC7. Fuente: docs/conexiones.md.
+#define PIN_PANEL_LAT 7U
+// Pin CLK del panel (HUB75 pin 13), conectado a PC8. Fuente: docs/conexiones.md.
+#define PIN_PANEL_CLK 8U
+// Pin A del panel (HUB75 pin 9), conectado a PC10. Fuente: docs/conexiones.md.
+#define PIN_PANEL_A 10U
+// Pin B de selección de fase del panel (HUB75 pin 10), conectado a PC11. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B 11U
+
+// Bits que se desplazan por fase y por módulo: 4 bloques de 16. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_BITS_POR_FASE 64U
+// Ancho del tablero en píxeles (columnas x). Etapa 1: un solo panel de 32 columnas. En la etapa 2 cambia aquí.
+#define PANEL_ANCHO 32U
+// Alto del tablero en píxeles (filas y). Etapa 1: un solo panel de 16 filas. En la etapa 2 cambia aquí.
+#define PANEL_ALTO 16U
+// Número de fases del escaneo 1/4: cada fase enciende 4 filas (0, 1, 2, 3). Fuente: docs/mapeo_pixeles.md.
+#define PANEL_FASES 4U
+// Bits que se desplazan en cada bloque de 16 bits. Fuente: docs/mapeo_pixeles.md (bloque = bit / 16).
+#define PANEL_BITS_POR_BLOQUE 16U
+// Columnas que ocupa cada mitad de un bloque (8 para la mitad j < 8 y 8 para la mitad j >= 8). Fuente: docs/mapeo_pixeles.md.
+#define PANEL_COLUMNAS_POR_BLOQUE 8U
+// Separación en filas entre la mitad j < 8 y la mitad j >= 8 de un bloque: y = fase + 4. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_SEPARACION_FILAS 4U
+// Filas que hay entre la mitad de arriba y la de abajo del panel: R2, G2 y B2 suman 8 a y. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_FILAS_MITAD_SUPERIOR 8U
+// Posición del bit de los colores de abajo (R2, G2, B2) dentro de datos: R2 es el bit 3. Fuente: desplazar_bit en src/panel.c.
+#define PANEL_DESPLAZAMIENTO_MITAD_INFERIOR 3U
+
+// Color negro: los tres bits de color en 0 (el pixel está apagado).
+#define COLOR_NEGRO 0U
+// Color rojo: solo el bit R (bit 0) en 1.
+#define COLOR_ROJO 1U
+// Color verde: solo el bit G (bit 1) en 1.
+#define COLOR_VERDE 2U
+// Color azul: solo el bit B (bit 2) en 1.
+#define COLOR_AZUL 4U
+// Color amarillo: bits R (bit 0) y G (bit 1) en 1, es decir, rojo + verde.
+#define COLOR_AMARILLO 3U
+// Color magenta: bits R (bit 0) y B (bit 2) en 1, es decir, rojo + azul.
+#define COLOR_MAGENTA 5U
+// Color cian: bits G (bit 1) y B (bit 2) en 1, es decir, verde + azul.
+#define COLOR_CIAN 6U
+// Color blanco: los tres bits R, G y B en 1.
+#define COLOR_BLANCO 7U
+
+// Nivel de OE que enciende el panel: 0 (OE activo en bajo). Confirmado en la placa (2026-11-09).
+// Si otro panel no enciende, se intercambian este valor y NIVEL_OE_APAGADO.
+#define NIVEL_OE_ENCENDIDO 0U
+// Nivel de OE que apaga el panel: 1, el opuesto de NIVEL_OE_ENCENDIDO. Confirmado en la placa (2026-11-09).
+#define NIVEL_OE_APAGADO 1U
+
+// Configura los pines del panel como salidas y los deja en un estado seguro.
+void configurar_panel(void);
+// Enciende TIM3 para que interrumpa cada 1 ms y el panel se refresque solo.
+void iniciar_refresco_panel(void);
+// Guarda el color (uno de los COLOR_*) del píxel (x, y) en el framebuffer.
+void encender_pixel(uint32_t x, uint32_t y, uint32_t color);
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 5: `COLOR_AMARILLO` = 3, `COLOR_MAGENTA` = 5, `COLOR_CIAN` = 6 y `COLOR_BLANCO` = 7 (sumas de bits, ver la tabla) y el comentario de `encender_pixel`, que ahora dice «uno de los `COLOR_*`» porque ya hay ocho valores posibles.
+
+`inc/graficos.h`
+
+```c
+#ifndef GRAFICOS_H
+#define GRAFICOS_H
+
+#include "panel.h"
+
+// Ancho de un dígito de la fuente en columnas (3 bits por fila).
+#define FUENTE_ANCHO 3U
+// Alto de un dígito de la fuente en filas (5 filas por dígito).
+#define FUENTE_ALTO 5U
+// Cantidad de dígitos de la fuente (los dígitos 0 a 9).
+#define FUENTE_CANTIDAD_DIGITOS 10U
+
+// Pone en negro todos los píxeles del tablero.
+void borrar_pantalla(void);
+// Dibuja solo el contorno de un rectángulo de ancho por alto píxeles. (x, y) es la esquina superior izquierda.
+void dibujar_rectangulo(uint32_t x, uint32_t y, uint32_t ancho, uint32_t alto, uint32_t color);
+// Dibuja el dígito (0 a 9) de 3x5 con la esquina superior izquierda en (x, y). Solo enciende los píxeles del dígito; los demás no se tocan.
+void dibujar_digito(uint32_t x, uint32_t y, uint32_t digito, uint32_t color);
+
+#endif
+```
+
+- `FUENTE_ANCHO` = 3 y `FUENTE_ALTO` = 5: tamaño de un dígito. `FUENTE_CANTIDAD_DIGITOS` = 10: los dígitos 0 a 9.
+- Incluye `panel.h` porque las funciones usan `encender_pixel`, `PANEL_ANCHO`, `PANEL_ALTO` y los `COLOR_*`.
+
+`src/graficos.c`
+
+```c
+#include "graficos.h"
+
+// Fuente propia de 3x5 para los dígitos 0 a 9. Cada dígito son 5 bytes, uno por fila, de arriba abajo.
+// Solo se usan los bits 0 a 2 de cada byte: el bit 2 es la columna izquierda y el bit 0 la columna derecha.
+// Se escribe en binario con literales 0b... (extensión de GCC, que acepta arm-none-eabi-gcc).
+// Es const, así que el arreglo va en FLASH (.rodata) y no ocupa RAM.
+static const uint8_t fuente_digitos[FUENTE_CANTIDAD_DIGITOS][FUENTE_ALTO] = {
+    // Dígito 0: 111 101 101 101 111.
+    { 0b111, 0b101, 0b101, 0b101, 0b111 },
+    // Dígito 1: 010 110 010 010 111.
+    { 0b010, 0b110, 0b010, 0b010, 0b111 },
+    // Dígito 2: 111 001 111 100 111.
+    { 0b111, 0b001, 0b111, 0b100, 0b111 },
+    // Dígito 3: 111 001 111 001 111.
+    { 0b111, 0b001, 0b111, 0b001, 0b111 },
+    // Dígito 4: 101 101 111 001 001.
+    { 0b101, 0b101, 0b111, 0b001, 0b001 },
+    // Dígito 5: 111 100 111 001 111.
+    { 0b111, 0b100, 0b111, 0b001, 0b111 },
+    // Dígito 6: 111 100 111 101 111.
+    { 0b111, 0b100, 0b111, 0b101, 0b111 },
+    // Dígito 7: 111 001 001 001 001.
+    { 0b111, 0b001, 0b001, 0b001, 0b001 },
+    // Dígito 8: 111 101 111 101 111.
+    { 0b111, 0b101, 0b111, 0b101, 0b111 },
+    // Dígito 9: 111 101 111 001 111.
+    { 0b111, 0b101, 0b111, 0b001, 0b111 },
+};
+
+// Pone en negro todos los píxeles del tablero.
+void borrar_pantalla(void)
+{
+    // Recorre todas las filas del tablero.
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // Recorre todas las columnas de la fila.
+        for (uint32_t x = 0U; x < PANEL_ANCHO; x++) {
+            // Pone el píxel (x, y) en negro.
+            encender_pixel(x, y, COLOR_NEGRO);
+        }
+    }
+}
+
+// Dibuja el contorno de un rectángulo: la fila de arriba, la de abajo, la columna izquierda y la derecha.
+// Si el ancho o el alto son 0, no se dibuja nada: con alto = 0, alto - 1U daría una vuelta de uint32_t (0xFFFFFFFF).
+void dibujar_rectangulo(uint32_t x, uint32_t y, uint32_t ancho, uint32_t alto, uint32_t color)
+{
+    // Ancho o alto en 0: no hay rectángulo que dibujar, se sale sin tocar el tablero.
+    if (ancho == 0U || alto == 0U) {
+        return;
+    }
+    // Recorre las columnas del rectángulo (de x hasta x + ancho - 1) para pintar la fila de arriba y la de abajo.
+    for (uint32_t columna = x; columna < x + ancho; columna++) {
+        // Fila de arriba del rectángulo.
+        encender_pixel(columna, y, color);
+        // Fila de abajo del rectángulo (y + alto - 1).
+        encender_pixel(columna, y + alto - 1U, color);
+    }
+    // Recorre las filas del rectángulo (de y hasta y + alto - 1) para pintar la columna izquierda y la derecha.
+    for (uint32_t fila = y; fila < y + alto; fila++) {
+        // Columna izquierda del rectángulo.
+        encender_pixel(x, fila, color);
+        // Columna derecha del rectángulo (x + ancho - 1).
+        encender_pixel(x + ancho - 1U, fila, color);
+    }
+    // Los píxeles que caen fuera del tablero los ignora encender_pixel, así que un rectángulo que se sale no escribe fuera del arreglo.
+}
+
+// Dibuja un dígito de 3x5 con la esquina superior izquierda en (x, y). Solo enciende los píxeles que valen 1 en la fuente.
+void dibujar_digito(uint32_t x, uint32_t y, uint32_t digito, uint32_t color)
+{
+    // Si el número no es un dígito de la fuente (0 a 9), no se dibuja nada.
+    if (digito >= FUENTE_CANTIDAD_DIGITOS) {
+        return;
+    }
+    // Recorre las filas del dígito, de arriba abajo.
+    for (uint32_t fila = 0U; fila < FUENTE_ALTO; fila++) {
+        // Recorre las columnas del dígito, de izquierda a derecha.
+        for (uint32_t columna = 0U; columna < FUENTE_ANCHO; columna++) {
+            // El desplazamiento toma el bit de esta columna: la columna 0 (izquierda) es el bit 2 y la columna 2 (derecha) es el bit 0.
+            // Se desplaza el byte de la fila y con & 1U se mira solo ese bit. Si vale 1, el píxel se enciende.
+            if (((fuente_digitos[digito][fila] >> (FUENTE_ANCHO - 1U - columna)) & 1U) == 1U) {
+                // Enciende el píxel del dígito en su posición dentro del tablero.
+                encender_pixel(x + columna, y + fila, color);
+            }
+        }
+    }
+}
+```
+
+- **`fuente_digitos[10][5]`:** cada dígito son 5 bytes, uno por fila, de arriba abajo. Solo importan los 3 bits de menor peso: el bit 2 es la columna izquierda y el bit 0 la derecha. Se escribe con literales binarios `0b…` para que los unos formen el dibujo (una extensión de GCC, no C estándar; compila sin advertencias). Al ser `static const`, solo la ve este archivo y vive en la FLASH (`.rodata`), no en RAM: `nm` la ubica en `0x08000a9c`, con 50 bytes (`0x32`), tipo `r`.
+- **`borrar_pantalla`:** dos `for` que ponen `COLOR_NEGRO` en los 512 píxeles. Es la `limpiar_pantalla` del Paso 5, movida.
+- **`dibujar_rectangulo(x, y, ancho, alto, color)`:**
+  - Si `ancho` o `alto` valen 0, sale sin dibujar: con `alto = 0`, `alto - 1U` daría `0xFFFFFFFF` por ser un entero sin signo.
+  - El primer `for` recorre las columnas de `x` a `x + ancho − 1` y pinta la fila de arriba (`y`) y la de abajo (`y + alto − 1`).
+  - El segundo `for` recorre las filas y pinta la columna izquierda (`x`) y la derecha (`x + ancho − 1`).
+  - Las esquinas se pintan dos veces; no importa.
+  - Lo que cae fuera del tablero lo descarta `encender_pixel`.
+  - **No** protege contra coordenadas absurdas cercanas a 2³² (`x + ancho` podría dar la vuelta). Decisión de Daniela: sin protección, más fácil de explicar, porque el juego solo llamará con valores dentro del tablero.
+- **`dibujar_digito(x, y, digito, color)`:**
+  - Si `digito ≥ 10`, no hace nada.
+  - Recorre 5 filas y 3 columnas. Para cada celda toma un bit con `(byte >> (2 − columna)) & 1`: en la columna 0 desplaza 2 y deja el bit 2; en la columna 2 desplaza 0 y deja el bit 0.
+  - Si el bit vale 1, enciende `(x + columna, y + fila)`. Los apagados no se tocan: el dibujo es **transparente**, y para cambiar un número habrá que borrar antes.
+
+`main.c`
+
+```c
+#include "system_config.h"
+#include "panel.h"
+#include "graficos.h"
+
+// Columna donde empieza el primer dígito de cada fila.
+#define COLUMNA_INICIAL_DIGITOS 6U
+// Separación en columnas entre el inicio de un dígito y el siguiente: ancho 3 + 1 columna de separación.
+#define SEPARACION_DIGITOS 4U
+// Fila donde empieza la fila de dígitos de arriba.
+#define FILA_DIGITOS_ARRIBA 3U
+// Fila donde empieza la fila de dígitos de abajo.
+#define FILA_DIGITOS_ABAJO 9U
+// Cantidad de dígitos en cada fila: la fila de arriba muestra 0 a 4 y la de abajo 5 a 9.
+#define DIGITOS_POR_FILA 5U
+// Columna donde empieza la primera barra de colores.
+#define COLUMNA_INICIAL_BARRAS 2U
+// Separación en columnas entre el inicio de una barra y la siguiente: ancho 3 + 1 columna de separación.
+#define SEPARACION_BARRAS 4U
+// Ancho de cada barra en columnas.
+#define ANCHO_BARRA 3U
+// Alto de cada barra en filas.
+#define ALTO_BARRA 12U
+// Fila donde empiezan todas las barras.
+#define FILA_BARRAS 2U
+// Cantidad de barras: una por cada uno de los 7 colores de prueba.
+#define CANTIDAD_BARRAS 7U
+// Tiempo que se mantiene cada pantalla de prueba, en milisegundos.
+#define TIEMPO_PANTALLA_MS 3000U
+
+// Dibuja el marco blanco alrededor del tablero y los dígitos 0 a 9 en dos filas.
+static void mostrar_marco_y_digitos(void)
+{
+    // Se borra el tablero antes de dibujar la nueva pantalla.
+    borrar_pantalla();
+    // Marco blanco: contorno del tablero completo, desde la esquina (0, 0) con el tamaño del panel.
+    dibujar_rectangulo(0U, 0U, PANEL_ANCHO, PANEL_ALTO, COLOR_BLANCO);
+    // Recorre las posiciones de los dígitos de una fila (0 a 4).
+    for (uint32_t i = 0U; i < DIGITOS_POR_FILA; i++) {
+        // Columna de este dígito: la columna inicial más la separación por cada dígito anterior.
+        uint32_t posicion_x = COLUMNA_INICIAL_DIGITOS + SEPARACION_DIGITOS * i;
+        // Fila de arriba: el dígito i (0 a 4) en verde.
+        dibujar_digito(posicion_x, FILA_DIGITOS_ARRIBA, i, COLOR_VERDE);
+        // Fila de abajo: el dígito i + 5 (5 a 9) en amarillo.
+        dibujar_digito(posicion_x, FILA_DIGITOS_ABAJO, i + DIGITOS_POR_FILA, COLOR_AMARILLO);
+    }
+}
+
+// Dibuja siete barras verticales, una de cada color de prueba: rojo, verde, azul, amarillo, magenta, cian y blanco.
+static void mostrar_siete_colores(void)
+{
+    // Se borra el tablero antes de dibujar la nueva pantalla.
+    borrar_pantalla();
+    // Color de cada barra, de izquierda a derecha.
+    const uint32_t colores_de_prueba[CANTIDAD_BARRAS] = { COLOR_ROJO, COLOR_VERDE, COLOR_AZUL, COLOR_AMARILLO, COLOR_MAGENTA, COLOR_CIAN, COLOR_BLANCO };
+    // Recorre las siete barras.
+    for (uint32_t i = 0U; i < CANTIDAD_BARRAS; i++) {
+        // Dibuja el contorno de la barra i en su color, con la columna y fila de inicio de las barras.
+        dibujar_rectangulo(COLUMNA_INICIAL_BARRAS + SEPARACION_BARRAS * i, FILA_BARRAS, ANCHO_BARRA, ALTO_BARRA, colores_de_prueba[i]);
+    }
+}
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick), que usa esperar_milisegundos.
+    iniciar_systick();
+
+    // Se configuran los pines del panel como salidas.
+    configurar_panel();
+    // Se enciende TIM3: desde aquí, una interrupción cada 1 ms dibuja una fase del framebuffer en el panel.
+    iniciar_refresco_panel();
+
+    while (1) {
+        // Pantalla 1: se debe ver un marco blanco alrededor del panel, los dígitos 0 a 4 en verde en la fila de arriba y los dígitos 5 a 9 en amarillo en la fila de abajo, durante 3 s.
+        mostrar_marco_y_digitos();
+        esperar_milisegundos(TIEMPO_PANTALLA_MS);
+
+        // Pantalla 2: se deben ver siete barras contorneadas, de izquierda a derecha en rojo, verde, azul, amarillo, magenta, cian y blanco, durante 3 s.
+        mostrar_siete_colores();
+        esperar_milisegundos(TIEMPO_PANTALLA_MS);
+    }
+}
+```
+
+- Las constantes con nombre fijan las posiciones: los dígitos empiezan en la columna 6 con separación de 4 (ancho 3 + 1 columna libre) en las filas 3 y 9; las barras empiezan en la columna 2, separadas 4, de 3 columnas por 12 filas, desde la fila 2. Cada pantalla dura 3000 ms.
+- **`mostrar_marco_y_digitos`:** borra, dibuja el marco blanco `(0, 0, 32, 16)` y un `for` de `i = 0` a 4: cada vuelta pone el dígito `i` en verde (fila de arriba) y el `i + 5` en amarillo (fila de abajo), en la columna `6 + 4·i`.
+- **`mostrar_siete_colores`:** borra y un `for` de 7 vueltas dibuja un rectángulo en `x = 2 + 4·i` con el color `colores_de_prueba[i]` (rojo, verde, azul, amarillo, magenta, cian, blanco).
+- **`main`:** el mismo orden de siempre (reloj, SysTick, panel, refresco) y un bucle que alterna las dos pantallas con `esperar_milisegundos(3000)`.
+
+### Modificaciones y correcciones
+- Se mueve `limpiar_pantalla` a `graficos.c` con el nombre `borrar_pantalla` (el del plan) y `dibujar_marco` se reemplaza por `dibujar_rectangulo` con tamaño y posición.
+- `rellenar_parcial` y `dibujar_diagonales` (pruebas del Paso 5) desaparecen de `main.c`.
+- El comentario de `encender_pixel` se cambió tras la revisión por decisión de Daniela: ya no lista los cuatro colores.
+- Sin correcciones del `revisor`.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Dónde va la biblioteca | `graficos.h/.c` o `panel.h/.c` | `graficos.h` y `graficos.c` |
+| Colores | Los 7 del plan o solo los necesarios | Los 7 |
+| Rectángulo | Contorno, relleno o ambos | Solo contorno |
+| Fuente | Un byte por fila en binario o un `uint16_t` por dígito | Un byte por fila en binario |
+| Dibujo del dígito | Transparente u opaco | Transparente |
+| Prueba | Dos pantallas, solo marco y dígitos, o un dígito a la vez | Dos pantallas de 3 s |
+| Comentario de `encender_pixel` | Dejarlo o actualizarlo | Actualizarlo |
+| Protección de `dibujar_rectangulo` con coordenadas absurdas | Protegerlo o dejarlo | Sin protección (más fácil de explicar) |
+
+Decisiones menores del agente principal o del `programador` que Daniela puede objetar: el marco blanco, los dígitos en verde y amarillo, las dos desviaciones del `programador` sin cambio de comportamiento (`columna < x + ancho` en el bucle y `return` temprano en vez de `else`) y que `encender_pixel` mantiene su nombre.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 2766`, `data 0`, `bss 520`.
+- El `revisor` hizo un simulador de PC con el framebuffer de 16×32: imprimió los diez dígitos como cuadrícula 3×5 y coinciden con los dibujos pedidos; comprobó que `dibujar_rectangulo` no falla con ancho 0, alto 0, 1×1, 1×4 o 4×1; que un rectángulo que se sale se recorta sin escribir fuera; y que con los valores de `main.c` hay 0 intentos de escritura fuera del tablero. Pantalla 1: los dígitos ocupan las columnas 6 a 20 y las filas 3 a 7 y 9 a 13, sin pisar el marco ni solaparse. Pantalla 2: las barras ocupan las columnas 2 a 28 y las filas 2 a 13, sin tocarse.
+- `make flash`: voltaje 3,262 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa (2026-11-09): **se ven bien ambas pantallas** (marco blanco con los dígitos 0 a 4 en verde y 5 a 9 en amarillo, y las siete barras con sus colores).
+- Estimación de corriente (no medida; a partir de los ~2 A de una pantalla llena de `docs/conexiones.md`): unos 1,7 A para la pantalla 1 (el marco blanco son 92 píxeles con los tres colores) y unos 1,2 A para la 2, por debajo de los 3 A del cargador.
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación ni en la prueba.
+- Comentario desactualizado: el de `encender_pixel` seguía nombrando cuatro colores; se corrigió.
+- Pendiente para la guía: la sección del Paso 5 muestra el `main.c` de las pruebas anteriores, que se reemplaza en este paso (nota agregada).
+
+### Preguntas de autoevaluación
+1. ¿Cómo se guarda un color en el framebuffer y qué valor tiene el amarillo?
+   En 3 bits: R es el bit 0 (valor 1), G el bit 1 (valor 2) y B el bit 2 (valor 4). El amarillo es rojo + verde: `1 + 2 = 3`.
+2. ¿Dónde se guarda `fuente_digitos` y por qué?
+   En la FLASH (`.rodata`), porque es `const`: no cambia durante el programa, así que no hace falta gastar RAM. `nm` lo muestra con tipo `r`.
+3. ¿Qué bit toma `dibujar_digito` para la columna izquierda de un dígito y cómo lo extrae?
+   El bit 2 del byte de la fila. Lo extrae con `(byte >> (FUENTE_ANCHO − 1 − columna)) & 1U`: para la columna 0 desplaza 2 posiciones y con `& 1U` deja solo ese bit.
+4. ¿Por qué `dibujar_rectangulo` sale sin hacer nada si `alto` o `ancho` valen 0?
+   Porque `alto - 1U` es un entero sin signo y con `alto = 0` daría `0xFFFFFFFF`, y los bucles recorrerían valores enormes. Lo que no protege (coordenadas cercanas a 2³²) quedó fuera por decisión de simplicidad.
+5. ¿Por qué hay que llamar a `borrar_pantalla` antes de dibujar la siguiente pantalla?
+   Porque el framebuffer conserva lo que se escribió antes y `dibujar_digito` es transparente (solo enciende píxeles, nunca apaga): sin borrar, lo anterior se quedaría debajo de lo nuevo.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
