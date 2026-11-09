@@ -58,15 +58,17 @@ uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin)
     return (puerto->IDR & (1U << pin)) ? 1U : 0U;
 }
 
-// Pone un pin de salida en 1 o en 0.
+// Pone un pin de salida en 1 o en 0 usando BSRR.
+// BSRR: los bits 0 a 15 ponen en 1 el pin correspondiente; los bits 16 a 31 lo ponen en 0.
+// Los bits escritos con 0 no cambian nada. No se lee el registro, así que no hay lectura-modificación-escritura.
 void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado)
 {
-    // Si estado es distinto de 0, se pone en 1 el bit del pin en ODR (|= deja los demás bits igual).
+    // Si estado es distinto de 0, se escribe 1 en el bit "pin" (0 a 15) de BSRR: el pin queda en 1.
     if (estado != 0U) {
-        puerto->ODR |= (1U << pin);
-    // Si estado es 0, se pone en 0 el bit del pin en ODR (&= ~ deja los demás bits igual).
+        puerto->BSRR = (1U << pin);
+    // Si estado es 0, se escribe 1 en el bit "pin + 16" de BSRR (16 a 31): el pin queda en 0.
     } else {
-        puerto->ODR &= ~(1U << pin);
+        puerto->BSRR = (1U << (pin + 16U));
     }
 }
 

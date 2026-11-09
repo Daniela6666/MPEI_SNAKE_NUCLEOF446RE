@@ -10,6 +10,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 1 — Compilar y grabar (linker, Makefile, crt0.S)](#paso-1--compilar-y-grabar-linker-makefile-crt0s)
 - [Paso 2 — Reloj a 84 MHz y base de tiempo SysTick](#paso-2--reloj-a-84-mhz-y-base-de-tiempo-systick)
 - [Paso 3 — Botones del shield (entradas con pull-up)](#paso-3--botones-del-shield-entradas-con-pull-up)
+- [Paso 4 — Primer píxel con GPIO](#paso-4--primer-píxel-con-gpio)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -75,6 +76,15 @@ Cada término se define la primera vez que aparece, en una frase.
 | Rebote (bounce) | Cambios repetidos entre 1 y 0 que produce el contacto mecánico de un botón durante unos milisegundos al presionarlo o soltarlo; se evita con un antirrebote. |
 | Entrada flotante | Entrada sin nada que la lleve a 0 o 1: lee valores al azar por el ruido; el pull-up interno evita esa situación. |
 | Pines de depuración (PB3, PB4) | Pines que tras el reset están en función alterna para el depurador (JTAG/SWD); para usarlos como entrada hay que configurarlos explícitamente. |
+| HUB75 | Conector estándar de los paneles LED RGB: seis datos de color, CLK, LAT, OE y las entradas de fase A y B. |
+| Escaneo 1/4 y fase | El panel enciende a la vez solo 1 de cada 4 grupos de filas; la fase (0 a 3, con A y B) elige las filas `fase`, `fase + 4`, `fase + 8` y `fase + 12`. |
+| CLK | Reloj del panel: en cada flanco de subida toma el bit que hay en los pines de color y lo desplaza. |
+| LAT (latch) | Pulso en alto que copia los bits desplazados a los registros de salida que encienden los LED. |
+| OE (output enable) | Habilita las salidas del panel; en este panel es activo en bajo (0 enciende, 1 apaga). |
+| Registro de desplazamiento | Cadena de registros en la que cada pulso de CLK mueve los bits una posición. |
+| `BSRR` | Registro de solo escritura de un puerto: los bits 0 a 15 ponen pines en 1 y los bits 16 a 31 los ponen en 0, sin leer el registro. |
+| Push-pull | Tipo de salida que puede llevar el pin a 1 y a 0 activamente (`OTYPER = 0`); es el tipo por defecto. |
+| Flanco de subida | Instante en que una señal pasa de 0 a 1. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -1039,7 +1049,7 @@ Fuera del repo, con el `Makefile`, el `linker_script.ld` y el `crt0.S` del repo,
 
 **Cómo se hizo:** el agente principal resolvió con Daniela las decisiones; el subagente `programador` (Haiku) escribió los cuatro archivos; el subagente `revisor` (Sonnet) los revisó y no cambió nada; el agente principal agregó `(void)lectura_descartada;` por decisión de Daniela, recompiló y grabó la placa.
 
-**Nota (política de la guía, opción a):** `inc/registros_f446.h` y `main.c` que aparecen abajo son las **versiones del Paso 1**. El Paso 2 los cambia: ver «Paso 2». `registros_f446.h` conserva todo lo de abajo y agrega registros; en `main.c` se quita el botón. `gpio_config.c` y `gpio_config.h` también cambian en el Paso 3 (reloj del puerto B); lo demás de la pieza no cambia.
+**Nota (política de la guía, opción a):** `inc/registros_f446.h` y `main.c` que aparecen abajo son las **versiones del Paso 1**. El Paso 2 los cambia: ver «Paso 2». `registros_f446.h` conserva todo lo de abajo y agrega registros; en `main.c` se quita el botón. `gpio_config.c` y `gpio_config.h` también cambian en el Paso 3 (reloj del puerto B) y en el Paso 4 (`VELOCIDAD_ALTA` y `escribir_pin` con `BSRR`); lo demás de la pieza no cambia.
 
 **Origen:** `gpio_config.c/.h` del ejemplo `24-ADC-1` y `stm32f401.h` del ejemplo `4-custom-hal` del profesor (struct de registros), `main.c` del ejemplo `3-input-butt` (con la lógica del botón invertida, ver abajo). Datos del RM0390: direcciones base, sección 2.2.2, tabla 1 (leída literal en una transcripción en línea, docs.dirba.io); desplazamientos de GPIO, sección 7.4, tabla 26, y bits de `RCC_AHB1ENR`, sección 6.3.10 (solo de un resumen de la transcripción, coinciden con los ejemplos del profesor). **Antes de sustentar conviene comprobar estas tablas en el PDF de ST.**
 
@@ -1882,6 +1892,7 @@ Configurar los seis botones del shield (A a F) como entradas con pull-up interno
 - `inc/gpio_config.h` (modificado): solo el comentario de `habilitar_reloj_puerto` («puerto A, B o C»).
 - `main.c` (modificado): seis constantes de pin, seis bloques de configuración y un bucle que enciende el LED si hay algún botón presionado. Ya no hace parpadear el LED.
 - Las versiones anteriores de `registros_f446.h`, `gpio_config.*` y `main.c` se conservan en el Paso 1 (pieza 4) y en el Paso 2, con una nota (política de la guía: opción a).
+- El Paso 4 cambia después `gpio_config.*` y `main.c`: los que aparecen en esta sección son las **versiones del Paso 3**.
 
 ### Concepto de clase que se usa
 Entradas digitales de GPIO (`MODER`, `PUPDR`, `IDR`) y pull-up interno, como el ejemplo `3-input-butt` del profesor, ahora con seis botones en dos puertos. No se agrega ningún concepto nuevo de hardware: se reutiliza `configurar_pin` y `leer_pin` del Paso 1.
@@ -2427,6 +2438,428 @@ Decisión menor del agente principal que Daniela puede objetar: unir las seis le
    Porque basta con que uno cumpla `leer_pin(...) == 0U` para encender el LED. Con dos botones presionados el LED sigue encendido, porque la condición sigue siendo verdadera.
 5. ¿Qué es el rebote y por qué no afecta a este paso pero sí al paso 7?
    Es el cambio repetido entre 1 y 0 que hace el contacto del botón durante unos milisegundos al presionarlo. Aquí el LED sigue el nivel del pin y no se nota; en el paso 7 una pulsación debe contar una sola vez, así que habrá que ignorar los cambios durante un tiempo corto.
+
+## Paso 4 — Primer píxel con GPIO
+
+### Objetivo
+Encender un primer píxel del panel P10 usando solo GPIO normal, sin interrupciones ni timer: configurar los 11 pines del panel como salida y escribir la secuencia que envía una fase (desplazar los bits, latch, elegir la fase y encender la salida). La prueba enciende un solo píxel verde en `x = 7, y = 0`. De paso, `escribir_pin` pasa a usar `BSRR`.
+
+### Archivos creados o modificados
+- `inc/panel.h` y `src/panel.c` (nuevos): pines del panel, `configurar_panel` y `enviar_fase_con_un_bit`.
+- `inc/gpio_config.h` (modificado): constante `VELOCIDAD_ALTA`.
+- `src/gpio_config.c` (modificado): `escribir_pin` usa `BSRR`.
+- `main.c` (reescrito): ya no tiene LED ni botones; configura el panel y envía un píxel. Las versiones anteriores quedan en el Paso 3 y en el Paso 2.
+
+### Concepto de clase que se usa
+Salidas digitales de GPIO (`MODER`, `OSPEEDR`, `BSRR`), el reloj del puerto C y el manejo de una señal con flancos (CLK, LAT). Es el primer uso del panel HUB75 del proyecto; no viene de un ejemplo del profesor, sino de lo medido en el repositorio anterior (`docs/conexiones.md` y `docs/mapeo_pixeles.md`).
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó y no cambió nada; el agente principal leyó todo, recompiló, grabó la placa y, por decisión de Daniela, actualizó dos comentarios de `panel.h` tras la prueba.
+
+**Fuentes:** pines y mapeo del repositorio anterior (`docs/conexiones.md`, `docs/mapeo_pixeles.md`); offset de `BSRR` (`0x18`) y posición de `OSPEEDR` (`0x08`) comprobados contra `stm32f446xx.h` de STM32CubeF4 (solo verificación). **No verificado en el PDF del RM0390 (sección 7.4):** que `OSPEEDR = 11` sea «velocidad alta» y la descripción de `BSRR`. **Antes de sustentar conviene comprobarlo.**
+
+### Cómo funciona el panel (secuencia HUB75)
+El panel es de escaneo 1/4: en cada **fase** (0 a 3, escogida con las entradas A y B) se encienden las filas `fase`, `fase + 4`, `fase + 8` y `fase + 12`. Estas son las señales (descripción general de un HUB75; con tu panel funcionó como se describe):
+- **R1, G1, B1, R2, G2, B2:** seis datos de color. Los tres primeros son para la mitad de arriba y los tres últimos para la de abajo.
+- **CLK:** en cada flanco de subida el panel toma el bit que hay en los seis pines de color y lo desplaza en su cadena de registros.
+- **LAT (latch):** un pulso en alto copia lo que se desplazó a los registros de salida, que son los que encienden los LED.
+- **OE (output enable):** habilita o apaga las salidas. Este panel lo tiene **activo en bajo**: 0 enciende y 1 apaga (confirmado en la placa).
+- **A y B:** eligen la fase.
+
+Pasos de `enviar_fase_con_un_bit`: (1) desplazar los 64 bits con CLK, (2) apagar OE, (3) pulso de LAT, (4) fijar A y B, (5) encender OE. El latch va **después** de los 64 bits porque antes copiaría datos a medias; OE se apaga mientras cambian LAT y la fase para no mostrar basura.
+
+### `BSRR` (por qué reemplaza a `ODR` en `escribir_pin`)
+`BSRR` («bit set reset register») es un registro de **solo escritura** de 32 bits. Escribir un 1 en el bit `n` (0 a 15) pone el pin `n` en 1; escribir un 1 en el bit `n + 16` lo pone en 0. Los bits que se escriben en 0 no cambian nada.
+
+| | `ODR` (antes) | `BSRR` (ahora) |
+|---|---|---|
+| Poner PC6 en 1 | `ODR \|= (1 << 6)`: lee `ODR`, cambia un bit, escribe todo | `BSRR = (1 << 6)`: una sola escritura |
+| Poner PC6 en 0 | `ODR &= ~(1 << 6)` | `BSRR = (1 << (6 + 16))` |
+| Riesgo | Si una interrupción cambia otro pin entre la lectura y la escritura, el cambio se pierde | No lee: no hay ventana para ese error |
+
+Eso importará en el paso 5, cuando una interrupción de timer escriba pines de `GPIOC` mientras `main` hace otra cosa. `invertir_pin` sigue con `ODR` (invertir sí necesita leer el valor actual) y hoy no lo usa nadie.
+
+### Código explicado
+
+`inc/gpio_config.h`
+
+```c
+#ifndef GPIO_CONFIG_H
+#define GPIO_CONFIG_H
+
+#include "registros_f446.h"
+
+// Valores para los campos de configuración de un pin.
+// Fuente: RM0390, sección 7.4, descripción de los registros GPIOx_MODER, GPIOx_PUPDR y GPIOx_OSPEEDR.
+// Modo entrada: MODER = 00.
+#define MODO_ENTRADA 0U
+// Modo salida: MODER = 01.
+#define MODO_SALIDA 1U
+// Sin pull-up ni pull-down: PUPDR = 00.
+#define RESISTENCIA_NINGUNA 0U
+// Pull-up interno: PUPDR = 01 (el pin queda en 1 si nadie lo baja).
+#define RESISTENCIA_PULL_UP 1U
+// Velocidad baja: OSPEEDR = 00.
+#define VELOCIDAD_BAJA 0U
+// Velocidad alta: OSPEEDR = 11. Fuente: RM0390, sección 7.4, registro GPIOx_OSPEEDR (código por verificar en el PDF).
+#define VELOCIDAD_ALTA 3U
+
+// Datos para configurar un pin de una sola vez.
+typedef struct {
+    // Modo del pin: MODO_ENTRADA o MODO_SALIDA.
+    uint32_t modo;
+    // Número del pin dentro del puerto (0 a 15).
+    uint32_t pin;
+    // Resistencia interna: RESISTENCIA_NINGUNA o RESISTENCIA_PULL_UP.
+    uint32_t resistencia;
+    // Velocidad del pin: VELOCIDAD_BAJA o VELOCIDAD_ALTA.
+    uint32_t velocidad;
+    // Función alterna (AF0 a AF15). Usar 0U cuando el pin no es de función alterna.
+    uint32_t funcion_alterna;
+} ConfiguracionPin;
+
+// Enciende el reloj del puerto indicado (puerto A, B o C).
+void habilitar_reloj_puerto(RegistrosGPIO *puerto);
+// Escribe en los registros del puerto la configuración de un pin.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion);
+// Devuelve 1 si el pin está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin);
+// Pone el pin en 1 si estado es distinto de 0, o en 0 si estado es 0.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado);
+// Cambia el pin de 0 a 1 o de 1 a 0.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin);
+
+#endif
+```
+
+Lo **nuevo**: `VELOCIDAD_ALTA` = 3 (`OSPEEDR = 11`; el código está por verificar en el PDF) y el comentario del campo `velocidad`, que ahora admite `VELOCIDAD_BAJA` o `VELOCIDAD_ALTA`. Con velocidad alta el pin cambia de nivel con flancos más rápidos, útil para CLK.
+
+`src/gpio_config.c`
+
+```c
+#include "gpio_config.h"
+
+// Enciende el reloj del puerto. Sin reloj, los registros del puerto no responden.
+void habilitar_reloj_puerto(RegistrosGPIO *puerto)
+{
+    // Si el puerto es A, se pone en 1 el bit 0 de RCC->AHB1ENR (|= no cambia los demás bits).
+    if (puerto == GPIOA) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    // Si el puerto es B, se pone en 1 el bit 1 de RCC->AHB1ENR (|= no cambia los demás bits).
+    } else if (puerto == GPIOB) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+    // Si el puerto es C, se pone en 1 el bit 2 de RCC->AHB1ENR.
+    } else if (puerto == GPIOC) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    }
+    // Variable que solo sirve para leer el registro; el valor leído no se usa.
+    volatile uint32_t lectura_descartada;
+    // Dos lecturas después de habilitar el reloj, como en el ejemplo del profesor, por una errata del chip:
+    // el periférico necesita unos ciclos antes de poder usarse (no verificado en el RM0390).
+    lectura_descartada = RCC->AHB1ENR;
+    lectura_descartada = RCC->AHB1ENR;
+    // El valor leído no se usa: (void) le dice al compilador que se descarta a propósito (evita la advertencia).
+    (void)lectura_descartada;
+}
+
+// Configura un pin: modo, velocidad, resistencia y función alterna.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion)
+{
+    // Primero se enciende el reloj del puerto para poder escribir sus registros.
+    habilitar_reloj_puerto(puerto);
+
+    // Los paréntesis en ~(...) son obligatorios. Sin ellos, ~0x3U << posición se evalúa como (~0x3U) << posición
+    // y la máscara borra también la configuración de todos los pines con número menor.
+    // Esta es la corrección al WRITE_REG_FIELD del profesor, que usaba ~MASK sin paréntesis.
+    // MODER: borra los 2 bits del pin (máscara ~(0x3U << posición)) y pone el modo nuevo en esos bits.
+    puerto->MODER = (puerto->MODER & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.modo << (configuracion.pin * 2U));
+    // OSPEEDR: borra los 2 bits de velocidad del pin y pone la velocidad nueva.
+    puerto->OSPEEDR = (puerto->OSPEEDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.velocidad << (configuracion.pin * 2U));
+    // PUPDR: borra los 2 bits de resistencia del pin y pone la resistencia nueva.
+    puerto->PUPDR = (puerto->PUPDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.resistencia << (configuracion.pin * 2U));
+
+    // Pines 0 a 7: la función alterna está en AFRL.
+    if (configuracion.pin < 8U) {
+        // AFRL: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRL = (puerto->AFRL & ~(0xFU << (configuracion.pin * 4U))) | (configuracion.funcion_alterna << (configuracion.pin * 4U));
+    // Pines 8 a 15: la función alterna está en AFRH; la posición se calcula restando 8.
+    } else {
+        // AFRH: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRH = (puerto->AFRH & ~(0xFU << ((configuracion.pin - 8U) * 4U))) | (configuracion.funcion_alterna << ((configuracion.pin - 8U) * 4U));
+    }
+}
+
+// Lee el estado de un pin de entrada. Devuelve 1 si está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // IDR tiene el estado real de cada pin. (1U << pin) crea una máscara con solo ese bit.
+    // Si el bit del pin es 1, la expresión vale distinto de 0 y se devuelve 1U; si no, se devuelve 0U.
+    return (puerto->IDR & (1U << pin)) ? 1U : 0U;
+}
+
+// Pone un pin de salida en 1 o en 0 usando BSRR.
+// BSRR: los bits 0 a 15 ponen en 1 el pin correspondiente; los bits 16 a 31 lo ponen en 0.
+// Los bits escritos con 0 no cambian nada. No se lee el registro, así que no hay lectura-modificación-escritura.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado)
+{
+    // Si estado es distinto de 0, se escribe 1 en el bit "pin" (0 a 15) de BSRR: el pin queda en 1.
+    if (estado != 0U) {
+        puerto->BSRR = (1U << pin);
+    // Si estado es 0, se escribe 1 en el bit "pin + 16" de BSRR (16 a 31): el pin queda en 0.
+    } else {
+        puerto->BSRR = (1U << (pin + 16U));
+    }
+}
+
+// Invierte un pin de salida: si estaba en 1 pasa a 0, y si estaba en 0 pasa a 1.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // ^= con la máscara del pin invierte solo ese bit de ODR y deja los demás igual.
+    puerto->ODR ^= (1U << pin);
+}
+```
+
+Lo **nuevo** es solo `escribir_pin`: con `estado != 0` escribe `1U << pin` en `BSRR` (el pin queda en 1); con `estado == 0` escribe `1U << (pin + 16U)` (el pin queda en 0). El `revisor` comprobó en el desensamblado que el store va al desplazamiento `+0x18` y que para poner en 0 se suma 16 al pin. Lo demás es del Paso 1, el Paso 2 y el Paso 3.
+
+`inc/panel.h`
+
+```c
+#ifndef PANEL_H
+#define PANEL_H
+
+#include "gpio_config.h"
+
+// Pin R1 del panel (HUB75 pin 1), conectado a PC0. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R1 0U
+// Pin G1 del panel (HUB75 pin 2), conectado a PC1. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G1 1U
+// Pin B1 del panel (HUB75 pin 3), conectado a PC2. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B1 2U
+// Pin R2 del panel (HUB75 pin 5), conectado a PC3. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R2 3U
+// Pin G2 del panel (HUB75 pin 6), conectado a PC4. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G2 4U
+// Pin B2 del panel (HUB75 pin 7), conectado a PC5. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B2 5U
+// Pin OE del panel (HUB75 pin 15), conectado a PC6. Fuente: docs/conexiones.md.
+#define PIN_PANEL_OE 6U
+// Pin LAT del panel (HUB75 pin 14), conectado a PC7. Fuente: docs/conexiones.md.
+#define PIN_PANEL_LAT 7U
+// Pin CLK del panel (HUB75 pin 13), conectado a PC8. Fuente: docs/conexiones.md.
+#define PIN_PANEL_CLK 8U
+// Pin A del panel (HUB75 pin 9), conectado a PC10. Fuente: docs/conexiones.md.
+#define PIN_PANEL_A 10U
+// Pin B de selección de fase del panel (HUB75 pin 10), conectado a PC11. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B 11U
+
+// Bits que se desplazan por fase y por módulo: 4 bloques de 16. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_BITS_POR_FASE 64U
+
+// Nivel de OE que enciende el panel: 0 (OE activo en bajo). Confirmado en la placa (2026-11-09).
+// Si otro panel no enciende, se intercambian este valor y NIVEL_OE_APAGADO.
+#define NIVEL_OE_ENCENDIDO 0U
+// Nivel de OE que apaga el panel: 1, el opuesto de NIVEL_OE_ENCENDIDO. Confirmado en la placa (2026-11-09).
+#define NIVEL_OE_APAGADO 1U
+
+// Configura los pines del panel como salidas y los deja en un estado seguro.
+void configurar_panel(void);
+// Envía una fase completa: 64 bits, de los cuales solo el bit bit_encendido lleva datos; el resto va en 0.
+void enviar_fase_con_un_bit(uint32_t fase, uint32_t bit_encendido, uint32_t datos);
+
+#endif
+```
+
+- **Once constantes `PIN_PANEL_*`:** el número de pin dentro de `GPIOC` (R1=0, G1=1, B1=2, R2=3, G2=4, B2=5, OE=6, LAT=7, CLK=8, A=10, B=11). Los seis pines de color son PC0 a PC5, en el mismo orden que los bits de `datos` en `desplazar_bit`. El comentario de cada una dice a qué pin del conector HUB75 corresponde.
+- **`PANEL_BITS_POR_FASE` = 64:** 4 bloques de 16 bits por fase y por módulo (con dos paneles, la cadena se duplica).
+- **`NIVEL_OE_ENCENDIDO` = 0 y `NIVEL_OE_APAGADO` = 1:** OE activo en bajo, confirmado en la placa. Están en dos constantes para poder invertirlos en un solo lugar si otro panel lo necesitara.
+
+`src/panel.c`
+
+```c
+#include "panel.h"
+
+// Configura un pin del panel (puerto C) como salida push-pull, sin resistencia, con velocidad alta.
+static void configurar_salida_del_panel(uint32_t pin)
+{
+    // Datos de configuración del pin del panel.
+    ConfiguracionPin configuracion;
+    // Modo salida: el microcontrolador maneja el pin y saca el nivel que se le escriba.
+    configuracion.modo = MODO_SALIDA;
+    // Número del pin dentro del puerto C.
+    configuracion.pin = pin;
+    // Sin pull-up ni pull-down: el pin lo domina solo la salida.
+    configuracion.resistencia = RESISTENCIA_NINGUNA;
+    // Velocidad alta: los flancos de CLK y LAT tienen que ser rápidos.
+    configuracion.velocidad = VELOCIDAD_ALTA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion.funcion_alterna = 0U;
+    // Se escribe la configuración en el puerto C.
+    configurar_pin(GPIOC, configuracion);
+}
+
+// Desplaza un bit por los seis colores. datos lleva en sus bits 0 a 5 los valores de R1, G1, B1, R2, G2 y B2.
+static void desplazar_bit(uint32_t datos)
+{
+    // R1 sale por PC0: se toma el bit 0 de datos (el desplazamiento es el número del pin).
+    escribir_pin(GPIOC, PIN_PANEL_R1, (datos >> PIN_PANEL_R1) & 1U);
+    // G1 sale por PC1: se toma el bit 1 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_G1, (datos >> PIN_PANEL_G1) & 1U);
+    // B1 sale por PC2: se toma el bit 2 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_B1, (datos >> PIN_PANEL_B1) & 1U);
+    // R2 sale por PC3: se toma el bit 3 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_R2, (datos >> PIN_PANEL_R2) & 1U);
+    // G2 sale por PC4: se toma el bit 4 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_G2, (datos >> PIN_PANEL_G2) & 1U);
+    // B2 sale por PC5: se toma el bit 5 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_B2, (datos >> PIN_PANEL_B2) & 1U);
+    // CLK en 1: el panel toma el bit de los pines de color en este flanco de subida.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 1U);
+    // CLK en 0: deja CLK listo para el siguiente bit.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 0U);
+}
+
+// Configura los pines del panel. Primero se dejan en un nivel seguro y después pasan a salida.
+void configurar_panel(void)
+{
+    // Se enciende el reloj del puerto C antes de escribir sus registros.
+    habilitar_reloj_puerto(GPIOC);
+    // OE apagado antes de ser salida: el panel no debe mostrar basura mientras se configura.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_APAGADO);
+    // CLK en 0 antes de ser salida: el reset deja ODR en 0, pero se escribe por claridad.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 0U);
+    // LAT en 0 antes de ser salida: el panel no debe cargar datos mientras se configura.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 0U);
+    // R1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_R1);
+    // G1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_G1);
+    // B1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_B1);
+    // R2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_R2);
+    // G2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_G2);
+    // B2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_B2);
+    // OE como salida.
+    configurar_salida_del_panel(PIN_PANEL_OE);
+    // LAT como salida.
+    configurar_salida_del_panel(PIN_PANEL_LAT);
+    // CLK como salida.
+    configurar_salida_del_panel(PIN_PANEL_CLK);
+    // A como salida (selección de fase).
+    configurar_salida_del_panel(PIN_PANEL_A);
+    // B como salida (selección de fase).
+    configurar_salida_del_panel(PIN_PANEL_B);
+}
+
+// Envía una fase completa. Solo el bit bit_encendido lleva datos; los demás bits van en 0.
+void enviar_fase_con_un_bit(uint32_t fase, uint32_t bit_encendido, uint32_t datos)
+{
+    // Se desplazan los 64 bits de la fase, uno por uno, con CLK.
+    for (uint32_t bit = 0U; bit < PANEL_BITS_POR_FASE; bit++) {
+        // Si es el bit elegido, se desplazan los datos.
+        if (bit == bit_encendido) {
+            desplazar_bit(datos);
+        // Si no es el bit elegido, se desplaza 0 para que ese píxel quede apagado.
+        } else {
+            desplazar_bit(0U);
+        }
+    }
+    // OE apagado mientras cambian LAT y la fase: así no se ve basura durante el cambio.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_APAGADO);
+    // LAT en 1: el latch pasa los 64 bits desplazados a la salida. Va después de desplazar todos los bits.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 1U);
+    // LAT en 0: termina el pulso de latch.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 0U);
+    // A toma el bit 0 de la fase (selección de fila dentro del escaneo 1/4).
+    escribir_pin(GPIOC, PIN_PANEL_A, fase & 1U);
+    // B toma el bit 1 de la fase.
+    escribir_pin(GPIOC, PIN_PANEL_B, (fase >> 1U) & 1U);
+    // OE encendido: el panel muestra la fase recién cargada.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_ENCENDIDO);
+}
+```
+
+- **`configurar_salida_del_panel(pin)`** (`static`: solo la ve este archivo). Arma una `ConfiguracionPin` con modo salida (`MODER = 01`), sin resistencia, velocidad alta y AF0, y llama a `configurar_pin(GPIOC, ...)`. Evita repetir 11 bloques de 8 líneas.
+- **`desplazar_bit(datos)`** (`static`). `datos` lleva en sus bits 0 a 5 los valores de R1, G1, B1, R2, G2 y B2, que es el mismo orden que PC0 a PC5. Por eso `(datos >> PIN_PANEL_X) & 1U` toma el bit correcto: el número del pin sirve como desplazamiento. Después CLK sube a 1 y baja a 0.
+- **`configurar_panel`**, en este orden:
+  1. `habilitar_reloj_puerto(GPIOC)`: sin reloj, las escrituras al puerto no hacen nada.
+  2. OE apagado, CLK en 0 y LAT en 0, **mientras los pines aún son entradas**. Cuando un pin pasa a salida toma el valor que ya hay en `ODR`; así OE nace apagado y el panel no muestra basura.
+  3. Los 11 pines pasan a salida. A y B quedan en 0 por el valor de reset de `ODR`.
+- **`enviar_fase_con_un_bit(fase, bit_encendido, datos)`:** el `for` da 64 vueltas; en la vuelta `bit_encendido` desplaza `datos` y en las demás desplaza `0`. Luego, la secuencia descrita arriba: OE apagado, LAT en 1 y en 0, A = `fase & 1`, B = `(fase >> 1) & 1`, OE encendido.
+
+`main.c`
+
+```c
+#include "system_config.h"
+#include "panel.h"
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick).
+    iniciar_systick();
+
+    // Se configuran los pines del panel como salidas.
+    configurar_panel();
+    // Según la fórmula de docs/mapeo_pixeles.md, el bit 0 de la fase 0 corresponde al píxel x = 7, y = 0.
+    // Se envía fase 0, bit 0 con datos solo en G1 (verde): debe encenderse ese píxel en verde.
+    enviar_fase_con_un_bit(0U, 0U, (1U << PIN_PANEL_G1));
+
+    while (1) {
+        // El panel conserva lo enviado mientras OE esté encendido; no hace falta repetir el envío.
+    }
+}
+```
+
+- `configurar_reloj()` e `iniciar_systick()` siguen siendo lo primero (base del proyecto, aunque este paso no espera tiempos).
+- `configurar_panel()` deja los pines listos y el panel apagado.
+- `enviar_fase_con_un_bit(0U, 0U, (1U << PIN_PANEL_G1))`: fase 0, bit 0, solo el verde de arriba (G1). Con la fórmula medida (bloque 0, `j = 0 < 8`) da `x = 8·0 + (7 − 0) = 7` y `y = fase = 0`.
+- El `while (1)` está vacío: el panel conserva lo cargado mientras OE esté encendido (confirmado en la placa: el píxel queda estable).
+- Se quitaron el LED PA5 y los botones: no se usan en este paso; la versión con botones está en el Paso 3.
+
+### Modificaciones y correcciones
+- `escribir_pin` pasa de `ODR` a `BSRR` (ver arriba); la firma no cambia, así que el resto del código no se toca.
+- `main.c` ya no configura LED ni botones.
+- Tras la prueba se actualizaron los comentarios de `NIVEL_OE_ENCENDIDO` y `NIVEL_OE_APAGADO`: dejaron de decir «NO verificado» y pasaron a «Confirmado en la placa (2026-11-09)». Solo comentarios; el binario no cambia (`text 1850`).
+- Sin correcciones del `revisor`.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Dónde va el código del panel | `panel.h/.c` o `main.c` | `panel.h` y `panel.c` |
+| Cómo se escriben los pines | `ODR`, cambiar `escribir_pin` a `BSRR`, o función nueva con `BSRR` | Cambiar `escribir_pin` a `BSRR` |
+| Velocidad de salida | Baja o alta (constante nueva) | Alta (`VELOCIDAD_ALTA`) |
+| Qué se enciende | Un píxel, una fila o ambos | Un solo píxel |
+| Color | Rojo, verde o azul | Verde (G1) |
+| Polaridad de OE | Activo en bajo, activo en alto o no se sabe | No se sabía; se puso en dos constantes y la prueba mostró **activo en bajo** |
+| Comentarios de OE tras la prueba | Dejarlos o actualizarlos | Actualizarlos |
+
+Decisiones menores del agente principal que Daniela puede objetar: la función de apoyo `configurar_salida_del_panel`, los nombres `enviar_fase_con_un_bit` y `desplazar_bit`, y dejar OE apagado y CLK y LAT en 0 antes de pasar los pines a salida.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 1850`, `data 0`, `bss 6`.
+- El `revisor` comprobó el offset `0x18` de `BSRR` y el `OSPEEDR` en `stm32f446xx.h`, las once constantes contra `docs/conexiones.md` y el desensamblado de `escribir_pin`.
+- `make flash`: voltaje 3,256 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- `nm`: `main = 0x080001c4`, `escribir_pin = 0x08000358`, `configurar_panel = 0x0800048c`, `enviar_fase_con_un_bit = 0x08000500`.
+- En la placa (2026-11-09): **se enciende un píxel verde en x = 7, y = 0 y queda estable.** Esto confirma OE activo en bajo, el bit 0 de la fase 0 en `x = 7, y = 0` y que el panel conserva el dato sin refrescar mientras OE esté encendido.
+
+### Errores encontrados y cómo se resolvieron
+- Al editar solo comentarios de `panel.h`, `make` respondió «Nothing to be done»: el Makefile no vigila los encabezados, así que un cambio solo en un `.h` no recompila los `.c`. Si se cambia un valor en un `.h`, hay que usar `make clean && make`. Quedó anotado como mejora posible del Makefile; no se cambió (Daniela decide).
+- La compilación no dio errores ni advertencias.
+
+### Preguntas de autoevaluación
+1. ¿Qué hace `BSRR` y por qué es más seguro que `ODR` cuando una interrupción también escribe pines del mismo puerto?
+   Escribir 1 en el bit `n` pone el pin `n` en 1 y en el bit `n + 16` lo pone en 0; los bits en 0 no cambian nada. No lee el registro, así que no hay lectura-modificación-escritura que una interrupción pueda interrumpir y hacer perder un cambio.
+2. ¿Por qué `configurar_panel` deja OE apagado antes de pasar los pines a salida?
+   Porque un pin que pasa a salida toma el valor que ya hay en `ODR` (0 tras el reset). Con OE activo en bajo, 0 encendería el panel con datos aleatorios; escribiendo antes el valor «apagado» el panel nace apagado.
+3. ¿Por qué el pulso de LAT va después de desplazar los 64 bits y con OE apagado?
+   LAT copia lo desplazado a las salidas: si fuera antes, copiaría datos incompletos. OE se apaga mientras cambian LAT y la fase para que no se vea basura durante el cambio.
+4. ¿Por qué el bit 0 de la fase 0 con G1 es el píxel `x = 7, y = 0`?
+   Con la fórmula medida: `bloque = 0 / 16 = 0` y `j = 0 % 16 = 0`; como `j < 8`, `x = 8·0 + (7 − 0) = 7` y `y = fase = 0`. G1 es la mitad de arriba, así que no se suma 8 a `y`.
+5. Si el panel quedara apagado, ¿qué es lo primero que se prueba y qué se cambia?
+   La polaridad de OE: se intercambian `NIVEL_OE_ENCENDIDO` y `NIVEL_OE_APAGADO` en `panel.h` (y se recompila con `make clean && make`, porque el Makefile no vigila los encabezados).
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.

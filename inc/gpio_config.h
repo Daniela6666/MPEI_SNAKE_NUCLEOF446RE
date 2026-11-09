@@ -15,6 +15,8 @@
 #define RESISTENCIA_PULL_UP 1U
 // Velocidad baja: OSPEEDR = 00.
 #define VELOCIDAD_BAJA 0U
+// Velocidad alta: OSPEEDR = 11. Fuente: RM0390, sección 7.4, registro GPIOx_OSPEEDR (código por verificar en el PDF).
+#define VELOCIDAD_ALTA 3U
 
 // Datos para configurar un pin de una sola vez.
 typedef struct {
@@ -24,7 +26,7 @@ typedef struct {
     uint32_t pin;
     // Resistencia interna: RESISTENCIA_NINGUNA o RESISTENCIA_PULL_UP.
     uint32_t resistencia;
-    // Velocidad del pin: VELOCIDAD_BAJA.
+    // Velocidad del pin: VELOCIDAD_BAJA o VELOCIDAD_ALTA.
     uint32_t velocidad;
     // Función alterna (AF0 a AF15). Usar 0U cuando el pin no es de función alterna.
     uint32_t funcion_alterna;
