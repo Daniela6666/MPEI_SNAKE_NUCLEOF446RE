@@ -9,6 +9,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 0 — Repositorio y documentos](#paso-0--repositorio-y-documentos)
 - [Paso 1 — Compilar y grabar (linker, Makefile, crt0.S)](#paso-1--compilar-y-grabar-linker-makefile-crt0s)
 - [Paso 2 — Reloj a 84 MHz y base de tiempo SysTick](#paso-2--reloj-a-84-mhz-y-base-de-tiempo-systick)
+- [Paso 3 — Botones del shield (entradas con pull-up)](#paso-3--botones-del-shield-entradas-con-pull-up)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -71,6 +72,9 @@ Cada término se define la primera vez que aparece, en una frase.
 | `CTRL` de SysTick | Registro con `ENABLE` (bit 0), `TICKINT` (bit 1, interrupción al llegar a 0) y `CLKSOURCE` (bit 2, 1 = reloj del procesador). |
 | Excepción y NVIC | SysTick es una excepción del núcleo y no pasa por el NVIC; el NVIC (controlador de interrupciones) maneja las IRQ de los periféricos. |
 | Espera bloqueante | Espera en la que la CPU no hace otra cosa; en `esperar_milisegundos` solo la interrupción sigue contando. |
+| Rebote (bounce) | Cambios repetidos entre 1 y 0 que produce el contacto mecánico de un botón durante unos milisegundos al presionarlo o soltarlo; se evita con un antirrebote. |
+| Entrada flotante | Entrada sin nada que la lleve a 0 o 1: lee valores al azar por el ruido; el pull-up interno evita esa situación. |
+| Pines de depuración (PB3, PB4) | Pines que tras el reset están en función alterna para el depurador (JTAG/SWD); para usarlos como entrada hay que configurarlos explícitamente. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -1035,7 +1039,7 @@ Fuera del repo, con el `Makefile`, el `linker_script.ld` y el `crt0.S` del repo,
 
 **Cómo se hizo:** el agente principal resolvió con Daniela las decisiones; el subagente `programador` (Haiku) escribió los cuatro archivos; el subagente `revisor` (Sonnet) los revisó y no cambió nada; el agente principal agregó `(void)lectura_descartada;` por decisión de Daniela, recompiló y grabó la placa.
 
-**Nota (política de la guía, opción a):** `inc/registros_f446.h` y `main.c` que aparecen abajo son las **versiones del Paso 1**. El Paso 2 los cambia: ver «Paso 2». `registros_f446.h` conserva todo lo de abajo y agrega registros; en `main.c` se quita el botón. Los demás archivos de la pieza no cambian.
+**Nota (política de la guía, opción a):** `inc/registros_f446.h` y `main.c` que aparecen abajo son las **versiones del Paso 1**. El Paso 2 los cambia: ver «Paso 2». `registros_f446.h` conserva todo lo de abajo y agrega registros; en `main.c` se quita el botón. `gpio_config.c` y `gpio_config.h` también cambian en el Paso 3 (reloj del puerto B); lo demás de la pieza no cambia.
 
 **Origen:** `gpio_config.c/.h` del ejemplo `24-ADC-1` y `stm32f401.h` del ejemplo `4-custom-hal` del profesor (struct de registros), `main.c` del ejemplo `3-input-butt` (con la lógica del botón invertida, ver abajo). Datos del RM0390: direcciones base, sección 2.2.2, tabla 1 (leída literal en una transcripción en línea, docs.dirba.io); desplazamientos de GPIO, sección 7.4, tabla 26, y bits de `RCC_AHB1ENR`, sección 6.3.10 (solo de un resumen de la transcripción, coinciden con los ejemplos del profesor). **Antes de sustentar conviene comprobar estas tablas en el PDF de ST.**
 
@@ -1403,6 +1407,7 @@ Subir el reloj del sistema de 16 MHz (HSI, el reloj con el que arranca el chip) 
 - `src/system_config.c` (nuevo): `configurar_reloj`, `iniciar_systick`, `SysTick_Handler` y `esperar_milisegundos`.
 - `main.c` (modificado): ya no configura el botón; hace parpadear el LED a 1 Hz con `esperar_milisegundos`.
 - La versión de `registros_f446.h` y de `main.c` del paso 1 se conserva en la pieza 4 del Paso 1, con una nota (decisión de Daniela, opción a).
+- El Paso 3 cambia otra vez `registros_f446.h` y `main.c` (y `gpio_config.*`): los que aparecen en esta sección son las **versiones del Paso 2**.
 
 ### Concepto de clase que se usa
 Reloj del sistema (RCC y PLL), estados de espera de la FLASH, SysTick, interrupciones y variables `volatile`. Los archivos `system_config.*` son los que `CLAUDE.md` lista como base del profesor (ejemplos 4, 7 y 24); aquí se reescribieron con nuestros structs y nombres, sin CMSIS.
@@ -1865,6 +1870,563 @@ Decisiones menores que tomó el agente principal y que Daniela puede objetar: re
    El compilador podría leerlo una sola vez y guardarlo en un registro de la CPU, porque en `main` nadie lo cambia; `esperar_milisegundos` no terminaría nunca, ya que la interrupción sí lo cambia pero el bucle no lo vería.
 5. ¿Por qué `(contador − instante_inicial) < milisegundos` sigue funcionando cuando el contador de 32 bits da la vuelta?
    Porque con enteros sin signo la resta es módulo 2³²: si `inicial = 0xFFFFFFFF` y `contador = 1`, la resta da 2, que son los milisegundos reales transcurridos.
+
+## Paso 3 — Botones del shield (entradas con pull-up)
+
+### Objetivo
+Configurar los seis botones del shield (A a F) como entradas con pull-up interno y comprobar que cada uno funciona. Esto obliga a agregar el puerto B (reloj y registros), porque cuatro de los seis botones están en él. La prueba usa el LED PA5: se enciende mientras cualquiera de los seis esté presionado. El USART queda para un paso aparte.
+
+### Archivos creados o modificados
+- `inc/registros_f446.h` (modificado): se agregan `GPIOB_BASE`, el puntero `GPIOB` y `RCC_AHB1ENR_GPIOBEN`; el comentario de `AHB1ENR` menciona el bit 1.
+- `src/gpio_config.c` (modificado): `habilitar_reloj_puerto` maneja también el puerto B.
+- `inc/gpio_config.h` (modificado): solo el comentario de `habilitar_reloj_puerto` («puerto A, B o C»).
+- `main.c` (modificado): seis constantes de pin, seis bloques de configuración y un bucle que enciende el LED si hay algún botón presionado. Ya no hace parpadear el LED.
+- Las versiones anteriores de `registros_f446.h`, `gpio_config.*` y `main.c` se conservan en el Paso 1 (pieza 4) y en el Paso 2, con una nota (política de la guía: opción a).
+
+### Concepto de clase que se usa
+Entradas digitales de GPIO (`MODER`, `PUPDR`, `IDR`) y pull-up interno, como el ejemplo `3-input-butt` del profesor, ahora con seis botones en dos puertos. No se agrega ningún concepto nuevo de hardware: se reutiliza `configurar_pin` y `leer_pin` del Paso 1.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió los cambios; el subagente `revisor` (Sonnet) los revisó y no cambió nada; el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** `GPIOB_BASE` = `0x40020400` (RM0390, sección 2.2.2, tabla 1) y el bit 1 de `RCC_AHB1ENR` (sección 6.3.10), comprobados contra `stm32f446xx.h` de STM32CubeF4 (carpeta hermana, solo como verificación) y contra el desensamblado; **no contra el PDF de ST**. Los pines de los botones (A=PA10, B=PB3, C=PB5, D=PB4, E=PB10, F=PA8) son los del shield, según `CLAUDE.md`. **Antes de sustentar conviene comprobar la tabla 1 y la sección 6.3.10 en el PDF del RM0390, y la tabla de funciones alternas de PB3 y PB4.**
+
+### Por qué los botones son activos en bajo
+Cada botón conecta el pin a GND cuando se presiona. Cuando no se presiona, el pin quedaría «flotando» (sin un nivel definido), y una entrada flotante lee 0 o 1 al azar por el ruido. El **pull-up interno** (`PUPDR = 01`) es una resistencia dentro del microcontrolador que lleva el pin a 3,3 V cuando nadie lo baja. Resultado:
+- botón **suelto** → el pin vale **1**;
+- botón **presionado** → el botón lo conecta a GND y el pin vale **0**.
+
+Por eso «presionado» se escribe `leer_pin(...) == 0U`. Se dice **activo en bajo** porque la acción se señala con el nivel bajo.
+
+### Código explicado
+
+`inc/registros_f446.h`
+
+```c
+#ifndef REGISTROS_F446_H
+#define REGISTROS_F446_H
+
+#include <stdint.h>
+
+// Direcciones base de los buses. Fuente: RM0390 (manual de referencia STM32F446),
+// sección 2.2.2, tabla 1 «STM32F446xx register boundary addresses».
+#define PERIFERICOS_BASE (0x40000000U)
+// Bus AHB1: aquí están los puertos GPIO y el RCC.
+#define AHB1_BASE (PERIFERICOS_BASE + 0x20000U)
+
+// Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
+// Puerto A de GPIO (0x40020000).
+#define GPIOA_BASE (AHB1_BASE)
+// Puerto B de GPIO (0x40020400). Fuente: RM0390, sección 2.2.2, tabla 1.
+#define GPIOB_BASE (AHB1_BASE + 0x400U)
+// Puerto C de GPIO (0x40020800).
+#define GPIOC_BASE (AHB1_BASE + 0x800U)
+// Controlador de reloj RCC (0x40023800).
+#define RCC_BASE (AHB1_BASE + 0x3800U)
+// Interfaz de la memoria FLASH (0x40023C00). Fuente: RM0390, sección 2.2.2, tabla 1, fila «Flash interface register».
+#define FLASH_BASE (AHB1_BASE + 0x3C00U)
+// Registros SysTick del núcleo Cortex-M4 (0xE000E010). Fuente: PM0214, sección «SysTick timer (STK)» (número de sección y tabla por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
+#define SYSTICK_BASE (0xE000E010U)
+
+// Mapa de los registros del puerto: cada campo está 4 bytes después del anterior,
+// por eso el orden no se puede cambiar. Fuente: RM0390, capítulo 7, sección 7.4, tabla 26.
+typedef struct {
+    // Desplazamiento 0x00. Modo de cada pin: 2 bits por pin (00 entrada, 01 salida, 10 alterna, 11 analógico).
+    volatile uint32_t MODER;
+    // Desplazamiento 0x04. Tipo de salida de cada pin: 1 bit por pin (0 push-pull, 1 open-drain).
+    volatile uint32_t OTYPER;
+    // Desplazamiento 0x08. Velocidad de cambio de cada pin: 2 bits por pin.
+    volatile uint32_t OSPEEDR;
+    // Desplazamiento 0x0C. Resistencia pull-up o pull-down de cada pin: 2 bits por pin.
+    volatile uint32_t PUPDR;
+    // Desplazamiento 0x10. Lectura del estado de los pines de entrada: 1 bit por pin.
+    volatile uint32_t IDR;
+    // Desplazamiento 0x14. Valor que se saca por cada pin de salida: 1 bit por pin.
+    volatile uint32_t ODR;
+    // Desplazamiento 0x18. Pone (bits 0 a 15) o borra (bits 16 a 31) bits de ODR de forma atómica.
+    volatile uint32_t BSRR;
+    // Desplazamiento 0x1C. Bloquea la configuración de los pines hasta el próximo reinicio.
+    volatile uint32_t LCKR;
+    // Desplazamiento 0x20. Función alterna de los pines 0 a 7: 4 bits por pin.
+    volatile uint32_t AFRL;
+    // Desplazamiento 0x24. Función alterna de los pines 8 a 15: 4 bits por pin.
+    volatile uint32_t AFRH;
+} RegistrosGPIO;
+
+// Mapa de los registros del RCC (reloj). Cada campo está en su desplazamiento del manual.
+// Fuente: RM0390, capítulo 6, sección 6.3, «RCC registers», mapa de registros.
+typedef struct {
+    // Desplazamiento 0x00. Control del reloj (HSI, HSE, PLL). Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CR;
+    // Desplazamiento 0x04. Configuración del PLL. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t PLLCFGR;
+    // Desplazamiento 0x08. Configuración del reloj del sistema y de los buses. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CFGR;
+    // Desplazamiento 0x0C. Interrupciones del reloj. No se usa todavía.
+    volatile uint32_t CIR;
+    // Desplazamiento 0x10. Reinicia los puertos AHB1. No se usa todavía.
+    volatile uint32_t AHB1RSTR;
+    // Desplazamiento 0x14. Reinicia los periféricos AHB2. No se usa todavía.
+    volatile uint32_t AHB2RSTR;
+    // Desplazamiento 0x18. Reinicia los periféricos AHB3. No se usa todavía.
+    volatile uint32_t AHB3RSTR;
+    // Desplazamiento 0x1C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_0;
+    // Desplazamiento 0x20. Reinicia los periféricos del bus APB1. No se usa todavía.
+    volatile uint32_t APB1RSTR;
+    // Desplazamiento 0x24. Reinicia los periféricos del bus APB2. No se usa todavía.
+    volatile uint32_t APB2RSTR;
+    // Desplazamientos 0x28 y 0x2C. Reservados por el fabricante, no se usan.
+    uint32_t RESERVADO_1[2];
+    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 1 = puerto B, bit 2 = puerto C).
+    volatile uint32_t AHB1ENR;
+} RegistrosRCC;
+
+// Solo se define ACR: los demás registros de la FLASH no se usan todavía.
+typedef struct {
+    // Desplazamiento 0x00. Control de acceso a la FLASH: estados de espera (LATENCY, bits 3:0). Fuente: RM0390, sección 3.8.1.
+    volatile uint32_t ACR;
+} RegistrosFLASH;
+
+// Mapa de los registros de SysTick, mismo criterio que RegistrosGPIO.
+typedef struct {
+    // Desplazamiento 0x00. Control y estado: habilitar, interrupción y fuente de reloj (bits 0 a 2).
+    volatile uint32_t CTRL;
+    // Desplazamiento 0x04. Valor de recarga del contador, de 24 bits (bits 23:0).
+    volatile uint32_t LOAD;
+    // Desplazamiento 0x08. Valor actual del contador; escribir cualquier valor lo pone en 0.
+    volatile uint32_t VAL;
+    // Desplazamiento 0x0C. Calibración del contador. No se usa.
+    volatile uint32_t CALIB;
+} RegistrosSysTick;
+
+// Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
+// Cada puntero apunta a la dirección base del periférico.
+#define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
+// Puntero al puerto B de GPIO (botones B, C, D y E del shield).
+#define GPIOB ((RegistrosGPIO *)GPIOB_BASE)
+// Puntero al puerto C de GPIO (botón azul PC13).
+#define GPIOC ((RegistrosGPIO *)GPIOC_BASE)
+// Puntero al controlador de reloj RCC.
+#define RCC ((RegistrosRCC *)RCC_BASE)
+// Puntero a la interfaz de la FLASH (se usa para FLASH->ACR).
+#define FLASH ((RegistrosFLASH *)FLASH_BASE)
+// Puntero a los registros de SysTick (se usa para SysTick->CTRL, LOAD y VAL).
+#define SysTick ((RegistrosSysTick *)SYSTICK_BASE)
+
+// Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOAEN (1U << 0)
+// Bit 1 de RCC_AHB1ENR: 1 enciende el reloj del puerto B. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOBEN (1U << 1)
+// Bit 2 de RCC_AHB1ENR: 1 enciende el reloj del puerto C. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOCEN (1U << 2)
+
+// Bit 24 de RCC_CR: 1 enciende el PLL. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLON (1U << 24)
+// Bit 25 de RCC_CR: 1 indica que el PLL ya enganchó y está listo. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLRDY (1U << 25)
+
+// Posición del campo PLLM (divisor de entrada del PLL) en RCC_PLLCFGR, bits 5:0. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_POSICION 0U
+// Máscara de los 6 bits de PLLM, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_MASCARA (0x3FU << RCC_PLLCFGR_PLLM_POSICION)
+// Posición del campo PLLN (multiplicador del VCO) en RCC_PLLCFGR, bits 14:6. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_POSICION 6U
+// Máscara de los 9 bits de PLLN, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_MASCARA (0x1FFU << RCC_PLLCFGR_PLLN_POSICION)
+// Posición del campo PLLP (divisor de salida del PLL) en RCC_PLLCFGR, bits 17:16. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_POSICION 16U
+// Máscara de los 2 bits de PLLP, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_MASCARA (0x3U << RCC_PLLCFGR_PLLP_POSICION)
+
+// Posición del campo SW (fuente del reloj del sistema) en RCC_CFGR, bits 1:0. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_POSICION 0U
+// Máscara de los 2 bits de SW, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_MASCARA (0x3U << RCC_CFGR_SW_POSICION)
+// Posición del campo SWS (fuente que el hardware está usando de verdad) en RCC_CFGR, bits 3:2. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_POSICION 2U
+// Máscara de los 2 bits de SWS, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_MASCARA (0x3U << RCC_CFGR_SWS_POSICION)
+// Posición del campo HPRE (divisor del AHB) en RCC_CFGR, bits 7:4. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_POSICION 4U
+// Máscara de los 4 bits de HPRE, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_MASCARA (0xFU << RCC_CFGR_HPRE_POSICION)
+// Posición del campo PPRE1 (divisor del APB1) en RCC_CFGR, bits 12:10. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_POSICION 10U
+// Máscara de los 3 bits de PPRE1, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_MASCARA (0x7U << RCC_CFGR_PPRE1_POSICION)
+// Posición del campo PPRE2 (divisor del APB2) en RCC_CFGR, bits 15:13. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_POSICION 13U
+// Máscara de los 3 bits de PPRE2, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_MASCARA (0x7U << RCC_CFGR_PPRE2_POSICION)
+
+// Posición del campo LATENCY (estados de espera de la FLASH) en FLASH_ACR, bits 3:0. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_POSICION 0U
+// Máscara de los 4 bits de LATENCY, ya desplazada a su posición. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_MASCARA (0xFU << FLASH_ACR_LATENCY_POSICION)
+
+// Bit 0 de SysTick CTRL: 1 enciende el contador. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_ENABLE (1U << 0)
+// Bit 1 de SysTick CTRL: 1 genera la interrupción al llegar el contador a 0. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_TICKINT (1U << 1)
+// Bit 2 de SysTick CTRL: 1 usa el reloj del procesador, 0 usa AHB/8. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_CLKSOURCE (1U << 2)
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 2:
+- `GPIOB_BASE` = `AHB1_BASE + 0x400` = `0x40020400`. Los puertos están separados por `0x400` bytes: A en `0x40020000`, B en `0x40020400`, C en `0x40020800`.
+- `GPIOB` es el puntero `(RegistrosGPIO *)GPIOB_BASE`. Se usa el mismo struct `RegistrosGPIO` porque todos los puertos tienen los mismos registros en los mismos desplazamientos.
+- `RCC_AHB1ENR_GPIOBEN` = `1U << 1`: el bit 1 de `RCC->AHB1ENR` enciende el reloj del puerto B.
+- El comentario de `AHB1ENR` ahora dice «bit 0 = puerto A, bit 1 = puerto B, bit 2 = puerto C».
+
+`inc/gpio_config.h`
+
+```c
+#ifndef GPIO_CONFIG_H
+#define GPIO_CONFIG_H
+
+#include "registros_f446.h"
+
+// Valores para los campos de configuración de un pin.
+// Fuente: RM0390, sección 7.4, descripción de los registros GPIOx_MODER, GPIOx_PUPDR y GPIOx_OSPEEDR.
+// Modo entrada: MODER = 00.
+#define MODO_ENTRADA 0U
+// Modo salida: MODER = 01.
+#define MODO_SALIDA 1U
+// Sin pull-up ni pull-down: PUPDR = 00.
+#define RESISTENCIA_NINGUNA 0U
+// Pull-up interno: PUPDR = 01 (el pin queda en 1 si nadie lo baja).
+#define RESISTENCIA_PULL_UP 1U
+// Velocidad baja: OSPEEDR = 00.
+#define VELOCIDAD_BAJA 0U
+
+// Datos para configurar un pin de una sola vez.
+typedef struct {
+    // Modo del pin: MODO_ENTRADA o MODO_SALIDA.
+    uint32_t modo;
+    // Número del pin dentro del puerto (0 a 15).
+    uint32_t pin;
+    // Resistencia interna: RESISTENCIA_NINGUNA o RESISTENCIA_PULL_UP.
+    uint32_t resistencia;
+    // Velocidad del pin: VELOCIDAD_BAJA.
+    uint32_t velocidad;
+    // Función alterna (AF0 a AF15). Usar 0U cuando el pin no es de función alterna.
+    uint32_t funcion_alterna;
+} ConfiguracionPin;
+
+// Enciende el reloj del puerto indicado (puerto A, B o C).
+void habilitar_reloj_puerto(RegistrosGPIO *puerto);
+// Escribe en los registros del puerto la configuración de un pin.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion);
+// Devuelve 1 si el pin está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin);
+// Pone el pin en 1 si estado es distinto de 0, o en 0 si estado es 0.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado);
+// Cambia el pin de 0 a 1 o de 1 a 0.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin);
+
+#endif
+```
+
+Solo cambió el comentario de `habilitar_reloj_puerto` (ahora «puerto A, B o C»). Las firmas y las constantes son las del Paso 1.
+
+`src/gpio_config.c`
+
+```c
+#include "gpio_config.h"
+
+// Enciende el reloj del puerto. Sin reloj, los registros del puerto no responden.
+void habilitar_reloj_puerto(RegistrosGPIO *puerto)
+{
+    // Si el puerto es A, se pone en 1 el bit 0 de RCC->AHB1ENR (|= no cambia los demás bits).
+    if (puerto == GPIOA) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    // Si el puerto es B, se pone en 1 el bit 1 de RCC->AHB1ENR (|= no cambia los demás bits).
+    } else if (puerto == GPIOB) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
+    // Si el puerto es C, se pone en 1 el bit 2 de RCC->AHB1ENR.
+    } else if (puerto == GPIOC) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
+    }
+    // Variable que solo sirve para leer el registro; el valor leído no se usa.
+    volatile uint32_t lectura_descartada;
+    // Dos lecturas después de habilitar el reloj, como en el ejemplo del profesor, por una errata del chip:
+    // el periférico necesita unos ciclos antes de poder usarse (no verificado en el RM0390).
+    lectura_descartada = RCC->AHB1ENR;
+    lectura_descartada = RCC->AHB1ENR;
+    // El valor leído no se usa: (void) le dice al compilador que se descarta a propósito (evita la advertencia).
+    (void)lectura_descartada;
+}
+
+// Configura un pin: modo, velocidad, resistencia y función alterna.
+void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion)
+{
+    // Primero se enciende el reloj del puerto para poder escribir sus registros.
+    habilitar_reloj_puerto(puerto);
+
+    // Los paréntesis en ~(...) son obligatorios. Sin ellos, ~0x3U << posición se evalúa como (~0x3U) << posición
+    // y la máscara borra también la configuración de todos los pines con número menor.
+    // Esta es la corrección al WRITE_REG_FIELD del profesor, que usaba ~MASK sin paréntesis.
+    // MODER: borra los 2 bits del pin (máscara ~(0x3U << posición)) y pone el modo nuevo en esos bits.
+    puerto->MODER = (puerto->MODER & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.modo << (configuracion.pin * 2U));
+    // OSPEEDR: borra los 2 bits de velocidad del pin y pone la velocidad nueva.
+    puerto->OSPEEDR = (puerto->OSPEEDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.velocidad << (configuracion.pin * 2U));
+    // PUPDR: borra los 2 bits de resistencia del pin y pone la resistencia nueva.
+    puerto->PUPDR = (puerto->PUPDR & ~(0x3U << (configuracion.pin * 2U))) | (configuracion.resistencia << (configuracion.pin * 2U));
+
+    // Pines 0 a 7: la función alterna está en AFRL.
+    if (configuracion.pin < 8U) {
+        // AFRL: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRL = (puerto->AFRL & ~(0xFU << (configuracion.pin * 4U))) | (configuracion.funcion_alterna << (configuracion.pin * 4U));
+    // Pines 8 a 15: la función alterna está en AFRH; la posición se calcula restando 8.
+    } else {
+        // AFRH: borra los 4 bits de función alterna del pin y pone la función nueva.
+        puerto->AFRH = (puerto->AFRH & ~(0xFU << ((configuracion.pin - 8U) * 4U))) | (configuracion.funcion_alterna << ((configuracion.pin - 8U) * 4U));
+    }
+}
+
+// Lee el estado de un pin de entrada. Devuelve 1 si está en 1 y 0 si está en 0.
+uint32_t leer_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // IDR tiene el estado real de cada pin. (1U << pin) crea una máscara con solo ese bit.
+    // Si el bit del pin es 1, la expresión vale distinto de 0 y se devuelve 1U; si no, se devuelve 0U.
+    return (puerto->IDR & (1U << pin)) ? 1U : 0U;
+}
+
+// Pone un pin de salida en 1 o en 0.
+void escribir_pin(RegistrosGPIO *puerto, uint32_t pin, uint32_t estado)
+{
+    // Si estado es distinto de 0, se pone en 1 el bit del pin en ODR (|= deja los demás bits igual).
+    if (estado != 0U) {
+        puerto->ODR |= (1U << pin);
+    // Si estado es 0, se pone en 0 el bit del pin en ODR (&= ~ deja los demás bits igual).
+    } else {
+        puerto->ODR &= ~(1U << pin);
+    }
+}
+
+// Invierte un pin de salida: si estaba en 1 pasa a 0, y si estaba en 0 pasa a 1.
+void invertir_pin(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // ^= con la máscara del pin invierte solo ese bit de ODR y deja los demás igual.
+    puerto->ODR ^= (1U << pin);
+}
+```
+
+Lo **nuevo**: el bloque `else if (puerto == GPIOB)`. Compara la dirección del puerto recibido con la de B y, si coincide, hace `RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN`. El `|=` conserva los relojes de A y C. Como `configurar_pin` llama a `habilitar_reloj_puerto` primero, el reloj de B se enciende solo al configurar el primer botón de ese puerto. El resto de la función se explicó en el Paso 1.
+
+`main.c`
+
+```c
+#include "registros_f446.h"
+#include "gpio_config.h"
+#include "system_config.h"
+
+// Número del pin del LED de la placa (PA5).
+#define PIN_LED 5U
+// Botón A del shield: pin PA10, activo en bajo (presionado = 0).
+#define PIN_BOTON_A 10U
+// Botón B del shield: pin PB3, activo en bajo (presionado = 0).
+#define PIN_BOTON_B 3U
+// Botón C del shield: pin PB5, activo en bajo (presionado = 0).
+#define PIN_BOTON_C 5U
+// Botón D del shield: pin PB4, activo en bajo (presionado = 0).
+#define PIN_BOTON_D 4U
+// Botón E del shield: pin PB10, activo en bajo (presionado = 0).
+#define PIN_BOTON_E 10U
+// Botón F del shield: pin PA8, activo en bajo (presionado = 0).
+#define PIN_BOTON_F 8U
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick).
+    iniciar_systick();
+
+    // Configuración del LED de la placa (PA5).
+    ConfiguracionPin configuracion_led;
+    // El LED es una salida.
+    configuracion_led.modo = MODO_SALIDA;
+    // Número del pin del LED.
+    configuracion_led.pin = PIN_LED;
+    // Sin pull-up ni pull-down en el LED.
+    configuracion_led.resistencia = RESISTENCIA_NINGUNA;
+    // Velocidad baja.
+    configuracion_led.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_led.funcion_alterna = 0U;
+    // Se escribe la configuración del LED en el puerto A.
+    configurar_pin(GPIOA, configuracion_led);
+
+    // Configuración del botón A (PA10) como entrada.
+    ConfiguracionPin configuracion_boton_A;
+    // El botón es una entrada.
+    configuracion_boton_A.modo = MODO_ENTRADA;
+    // Número del pin del botón A.
+    configuracion_boton_A.pin = PIN_BOTON_A;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_A.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_A.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_A.funcion_alterna = 0U;
+    // Se escribe la configuración del botón A en el puerto A.
+    configurar_pin(GPIOA, configuracion_boton_A);
+
+    // Configuración del botón B (PB3) como entrada.
+    ConfiguracionPin configuracion_boton_B;
+    // El botón es una entrada.
+    configuracion_boton_B.modo = MODO_ENTRADA;
+    // Número del pin del botón B.
+    configuracion_boton_B.pin = PIN_BOTON_B;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_B.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_B.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_B.funcion_alterna = 0U;
+    // PB3 arranca en función alterna de depuración; por eso se configura explícitamente como entrada.
+    configurar_pin(GPIOB, configuracion_boton_B);
+
+    // Configuración del botón C (PB5) como entrada.
+    ConfiguracionPin configuracion_boton_C;
+    // El botón es una entrada.
+    configuracion_boton_C.modo = MODO_ENTRADA;
+    // Número del pin del botón C.
+    configuracion_boton_C.pin = PIN_BOTON_C;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_C.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_C.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_C.funcion_alterna = 0U;
+    // Se escribe la configuración del botón C en el puerto B.
+    configurar_pin(GPIOB, configuracion_boton_C);
+
+    // Configuración del botón D (PB4) como entrada.
+    ConfiguracionPin configuracion_boton_D;
+    // El botón es una entrada.
+    configuracion_boton_D.modo = MODO_ENTRADA;
+    // Número del pin del botón D.
+    configuracion_boton_D.pin = PIN_BOTON_D;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_D.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_D.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_D.funcion_alterna = 0U;
+    // PB4 arranca en función alterna de depuración; por eso se configura explícitamente como entrada.
+    configurar_pin(GPIOB, configuracion_boton_D);
+
+    // Configuración del botón E (PB10) como entrada.
+    ConfiguracionPin configuracion_boton_E;
+    // El botón es una entrada.
+    configuracion_boton_E.modo = MODO_ENTRADA;
+    // Número del pin del botón E.
+    configuracion_boton_E.pin = PIN_BOTON_E;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_E.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_E.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_E.funcion_alterna = 0U;
+    // Se escribe la configuración del botón E en el puerto B.
+    configurar_pin(GPIOB, configuracion_boton_E);
+
+    // Configuración del botón F (PA8) como entrada.
+    ConfiguracionPin configuracion_boton_F;
+    // El botón es una entrada.
+    configuracion_boton_F.modo = MODO_ENTRADA;
+    // Número del pin del botón F.
+    configuracion_boton_F.pin = PIN_BOTON_F;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion_boton_F.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion_boton_F.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion_boton_F.funcion_alterna = 0U;
+    // Se escribe la configuración del botón F en el puerto A.
+    configurar_pin(GPIOA, configuracion_boton_F);
+
+    while (1) {
+        // Los botones son activos en bajo: presionado = pin en 0. El LED se enciende si CUALQUIERA de los seis está presionado, y se apaga si ninguno lo está.
+        if (leer_pin(GPIOA, PIN_BOTON_A) == 0U ||
+            leer_pin(GPIOB, PIN_BOTON_B) == 0U ||
+            leer_pin(GPIOB, PIN_BOTON_C) == 0U ||
+            leer_pin(GPIOB, PIN_BOTON_D) == 0U ||
+            leer_pin(GPIOB, PIN_BOTON_E) == 0U ||
+            leer_pin(GPIOA, PIN_BOTON_F) == 0U) {
+            // Algún botón está presionado: el LED PA5 se enciende (es activo en alto).
+            escribir_pin(GPIOA, PIN_LED, 1U);
+        } else {
+            // Ningún botón está presionado: el LED PA5 se apaga.
+            escribir_pin(GPIOA, PIN_LED, 0U);
+        }
+    }
+}
+```
+
+- **Constantes `PIN_BOTON_A` a `PIN_BOTON_F`.** Son los números de pin dentro de su puerto: 10 (PA10), 3 (PB3), 5 (PB5), 4 (PB4), 10 (PB10) y 8 (PA8). Dos botones tienen el número 10, pero uno es del puerto A y otro del B; el pin solo se entiende junto con su puerto.
+- **Un bloque por botón** (los seis son iguales y cambian el pin y el puerto):
+  1. `ConfiguracionPin configuracion_boton_X;` crea el struct.
+  2. `.modo = MODO_ENTRADA`: los 2 bits del pin en `MODER` quedan en `00`.
+  3. `.pin = PIN_BOTON_X`.
+  4. `.resistencia = RESISTENCIA_PULL_UP`: los 2 bits en `PUPDR` quedan en `01`.
+  5. `.velocidad = VELOCIDAD_BAJA`: no importa en una entrada, pero `configurar_pin` escribe el campo.
+  6. `.funcion_alterna = 0U`: AF0; en modo entrada no tiene efecto.
+  7. `configurar_pin(GPIOA o GPIOB, ...)`. Botones **A y F** en `GPIOA`; **B, C, D y E** en `GPIOB`.
+- **PB3 y PB4.** Tras el reset están en función alterna de depuración (el `revisor` comprobó que `MODER` vale `10`). Escribir `MODER = 00` los convierte en entrada. PB3 además no tiene resistencia tras el reset: sin esta configuración quedaría flotante. Con depuración SWD por ST-LINK, la depuración no necesita PB4 y solo usaría PB3 (SWO) si se activara el trace, algo que este proyecto no hace. Los comentarios de `main.c` dicen solo «función alterna de depuración» (decisión de Daniela); los nombres de las funciones (JTDO/TRACESWO y NJTRST) están por verificar en la tabla de funciones alternas del manual.
+- **El bucle.** El `if` une las seis condiciones `leer_pin(...) == 0U` con `||`. Si **cualquiera** se cumple, el LED se enciende (`escribir_pin(GPIOA, PIN_LED, 1U)`); si no, el `else` lo apaga. El `||` se evalúa de izquierda a derecha y se detiene en la primera condición verdadera; no cambia el resultado. No hay espera: el bucle lee los botones lo más rápido que puede, por eso el LED responde de inmediato.
+- `configurar_reloj()` e `iniciar_systick()` se siguen llamando aunque este paso no usa el tiempo, porque el reloj de 84 MHz es la base del proyecto y SysTick se usará en el paso 7.
+
+### Rebote (no afecta en este paso)
+Los contactos mecánicos de un botón no cambian de 1 a 0 de una vez: durante un tiempo corto (en general del orden de milisegundos; no se midió en este shield) el pin pasa varias veces entre 1 y 0 antes de estabilizarse. Esto se llama **rebote**. En este paso no importa porque el LED sigue el nivel del pin: si rebota unos milisegundos, el LED apenas parpadea. Sí importará en el paso 7, cuando una pulsación deba contar **una sola vez** (por ejemplo, para cambiar la dirección de la serpiente): ahí habrá que ignorar los cambios durante un tiempo corto (antirrebote), usando la base de tiempo de SysTick.
+
+### Modificaciones y correcciones
+- `registros_f446.h` y `gpio_config.*` crecen con el puerto B (ver arriba).
+- `main.c` ya no hace parpadear el LED ni usa `esperar_milisegundos` (la versión del Paso 2 queda en su sección).
+- El `programador` actualizó el comentario de `RegistrosRCC.AHB1ENR` para mencionar el bit 1; el `revisor` lo encontró correcto.
+- Sin correcciones del `revisor`: no encontró errores claros.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Qué botones se configuran | Los seis, o solo los cuatro de dirección | Los seis (A a F) |
+| PB3 y PB4 | Entrada explícita con pull-up, o dejarlos como arrancan | Entrada explícita con pull-up |
+| Cómo se prueban | LED, UART o LED con parpadeos | LED (se enciende con cualquiera de los seis) |
+| USART | En este paso o en uno aparte | En un paso aparte |
+| Dónde va el código de botones | `main.c` o `botones.h/.c` | Todo en `main.c` |
+| Cómo se escribe la configuración | Seis bloques explícitos o arreglo con `for` | Seis bloques explícitos |
+| Qué hace el LED | Encendido con cualquiera presionado, o se invierte con cada pulsación | Encendido mientras cualquiera esté presionado |
+| Macros `PIN_BOTON_*` | Dejarlas o escribir los números dentro de cada bloque | Dejarlas (igual que `PIN_LED`) |
+| Comentarios de PB3 y PB4 | Genéricos o nombrando JTDO/TRACESWO y NJTRST | Genéricos |
+
+Decisión menor del agente principal que Daniela puede objetar: unir las seis lecturas con `||` en un solo `if`.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 1826`, `data 0`, `bss 6`.
+- El `revisor` comprobó en `stm32f446xx.h` (STM32CubeF4) que `GPIOB_BASE` y el bit `GPIOBEN` coinciden, y en el desensamblado que `habilitar_reloj_puerto` compara con `0x40020000`, `0x40020400` y `0x40020800` y que para B hace `orr #2` sobre `RCC + 0x30`. También revisó que `configurar_pin` deja PB3 y PB4 en `MODER = 00` y `PUPDR = 01`.
+- `make flash`: voltaje 3,258 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- `nm`: `main = 0x080001c4`, `habilitar_reloj_puerto = 0x08000390`, `configurar_pin = 0x08000400`.
+- En la placa (2026-11-09): **los seis botones (A a F) encienden el LED mientras se mantienen presionados y lo apagan al soltarlos.**
+
+### Errores encontrados y cómo se resolvieron
+- La primera grabación falló con `Error: open failed`: la placa había dejado de estar conectada a WSL. Se resolvió volviendo a conectarla con `usbipd attach --wsl --busid 1-5` desde PowerShell como administrador; la segunda grabación salió bien.
+- Compilación: sin errores ni advertencias.
+
+### Preguntas de autoevaluación
+1. ¿Por qué los botones son activos en bajo y qué hace el pull-up interno?
+   El botón conecta el pin a GND al presionarlo. El pull-up interno (`PUPDR = 01`) lleva el pin a 1 cuando el botón está suelto; sin él quedaría flotando. Por eso suelto = 1 y presionado = 0.
+2. ¿Por qué PB3 y PB4 se configuran explícitamente como entrada?
+   Porque tras el reset están en función alterna de depuración (`MODER = 10`) y PB3 no tiene resistencia. Escribir `MODER = 00` y el pull-up los deja como entradas con un estado conocido.
+3. ¿Qué pasaría si `habilitar_reloj_puerto` no encendiera el reloj de GPIOB?
+   Los registros del puerto B no responderían: la configuración de los botones B, C, D y E se ignoraría, y esos pines no funcionarían como entradas con pull-up.
+4. ¿Por qué el `if` del bucle usa `||` y qué pasa si se presionan dos botones a la vez?
+   Porque basta con que uno cumpla `leer_pin(...) == 0U` para encender el LED. Con dos botones presionados el LED sigue encendido, porque la condición sigue siendo verdadera.
+5. ¿Qué es el rebote y por qué no afecta a este paso pero sí al paso 7?
+   Es el cambio repetido entre 1 y 0 que hace el contacto del botón durante unos milisegundos al presionarlo. Aquí el LED sigue el nivel del pin y no se nota; en el paso 7 una pulsación debe contar una sola vez, así que habrá que ignorar los cambios durante un tiempo corto.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.

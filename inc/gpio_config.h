@@ -30,7 +30,7 @@ typedef struct {
     uint32_t funcion_alterna;
 } ConfiguracionPin;
 
-// Enciende el reloj del puerto indicado (solo puerto A o C).
+// Enciende el reloj del puerto indicado (puerto A, B o C).
 void habilitar_reloj_puerto(RegistrosGPIO *puerto);
 // Escribe en los registros del puerto la configuración de un pin.
 void configurar_pin(RegistrosGPIO *puerto, ConfiguracionPin configuracion);

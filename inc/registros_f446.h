@@ -12,6 +12,8 @@
 // Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
 // Puerto A de GPIO (0x40020000).
 #define GPIOA_BASE (AHB1_BASE)
+// Puerto B de GPIO (0x40020400). Fuente: RM0390, sección 2.2.2, tabla 1.
+#define GPIOB_BASE (AHB1_BASE + 0x400U)
 // Puerto C de GPIO (0x40020800).
 #define GPIOC_BASE (AHB1_BASE + 0x800U)
 // Controlador de reloj RCC (0x40023800).
@@ -71,7 +73,7 @@ typedef struct {
     volatile uint32_t APB2RSTR;
     // Desplazamientos 0x28 y 0x2C. Reservados por el fabricante, no se usan.
     uint32_t RESERVADO_1[2];
-    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 2 = puerto C).
+    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 1 = puerto B, bit 2 = puerto C).
     volatile uint32_t AHB1ENR;
 } RegistrosRCC;
 
@@ -96,6 +98,8 @@ typedef struct {
 // Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
 // Cada puntero apunta a la dirección base del periférico.
 #define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
+// Puntero al puerto B de GPIO (botones B, C, D y E del shield).
+#define GPIOB ((RegistrosGPIO *)GPIOB_BASE)
 // Puntero al puerto C de GPIO (botón azul PC13).
 #define GPIOC ((RegistrosGPIO *)GPIOC_BASE)
 // Puntero al controlador de reloj RCC.
@@ -107,6 +111,8 @@ typedef struct {
 
 // Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
 #define RCC_AHB1ENR_GPIOAEN (1U << 0)
+// Bit 1 de RCC_AHB1ENR: 1 enciende el reloj del puerto B. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOBEN (1U << 1)
 // Bit 2 de RCC_AHB1ENR: 1 enciende el reloj del puerto C. Fuente: RM0390, sección 6.3.10.
 #define RCC_AHB1ENR_GPIOCEN (1U << 2)
 

@@ -6,6 +6,9 @@ void habilitar_reloj_puerto(RegistrosGPIO *puerto)
     // Si el puerto es A, se pone en 1 el bit 0 de RCC->AHB1ENR (|= no cambia los demás bits).
     if (puerto == GPIOA) {
         RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+    // Si el puerto es B, se pone en 1 el bit 1 de RCC->AHB1ENR (|= no cambia los demás bits).
+    } else if (puerto == GPIOB) {
+        RCC->AHB1ENR |= RCC_AHB1ENR_GPIOBEN;
     // Si el puerto es C, se pone en 1 el bit 2 de RCC->AHB1ENR.
     } else if (puerto == GPIOC) {
         RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
