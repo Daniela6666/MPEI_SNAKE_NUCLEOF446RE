@@ -8,6 +8,8 @@
 #define PERIFERICOS_BASE (0x40000000U)
 // Bus AHB1: aquí están los puertos GPIO y el RCC.
 #define AHB1_BASE (PERIFERICOS_BASE + 0x20000U)
+// Bus APB1: aquí está TIM3. Fuente: RM0390, sección 2.2.2, tabla 1 (el APB1 empieza en 0x40000000).
+#define APB1_BASE (PERIFERICOS_BASE)
 
 // Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
 // Puerto A de GPIO (0x40020000).
@@ -20,8 +22,12 @@
 #define RCC_BASE (AHB1_BASE + 0x3800U)
 // Interfaz de la memoria FLASH (0x40023C00). Fuente: RM0390, sección 2.2.2, tabla 1, fila «Flash interface register».
 #define FLASH_BASE (AHB1_BASE + 0x3C00U)
+// Timer de propósito general TIM3 (0x40000400). Fuente: RM0390, sección 2.2.2, tabla 1 (APB1_BASE + 0x400).
+#define TIM3_BASE (APB1_BASE + 0x400U)
 // Registros SysTick del núcleo Cortex-M4 (0xE000E010). Fuente: PM0214, sección «SysTick timer (STK)» (número de sección y tabla por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
 #define SYSTICK_BASE (0xE000E010U)
+// Registros del NVIC (controlador de interrupciones) del núcleo Cortex-M4 (0xE000E100). Fuente: PM0214, sección NVIC (por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
+#define NVIC_BASE (0xE000E100U)
 
 // Mapa de los registros del puerto: cada campo está 4 bytes después del anterior,
 // por eso el orden no se puede cambiar. Fuente: RM0390, capítulo 7, sección 7.4, tabla 26.
@@ -75,6 +81,14 @@ typedef struct {
     uint32_t RESERVADO_1[2];
     // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 1 = puerto B, bit 2 = puerto C).
     volatile uint32_t AHB1ENR;
+    // Desplazamiento 0x34. Habilita el reloj de los periféricos AHB2. No se usa todavía.
+    volatile uint32_t AHB2ENR;
+    // Desplazamiento 0x38. Habilita el reloj de los periféricos AHB3. No se usa todavía.
+    volatile uint32_t AHB3ENR;
+    // Desplazamiento 0x3C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_2;
+    // Desplazamiento 0x40. Habilita el reloj de los periféricos del bus APB1; se usa para TIM3 (bit 1).
+    volatile uint32_t APB1ENR;
 } RegistrosRCC;
 
 // Solo se define ACR: los demás registros de la FLASH no se usan todavía.
@@ -95,6 +109,41 @@ typedef struct {
     volatile uint32_t CALIB;
 } RegistrosSysTick;
 
+// Mapa de los registros de TIM3, en el orden del manual hasta ARR. Cada campo está en su desplazamiento.
+// Fuente: RM0390, capítulo de los timers de propósito general TIM2 a TIM5, mapa de registros (número de capítulo y sección por verificar por Daniela).
+typedef struct {
+    // Desplazamiento 0x00. Control 1: bit 0 CEN enciende el contador. Se usa para encender TIM3.
+    volatile uint32_t CR1;
+    // Desplazamiento 0x04. Control 2. No se usa.
+    volatile uint32_t CR2;
+    // Desplazamiento 0x08. Control del modo esclavo. No se usa.
+    volatile uint32_t SMCR;
+    // Desplazamiento 0x0C. Habilitación de interrupciones y DMA: bit 0 UIE habilita la interrupción de actualización. Se usa.
+    volatile uint32_t DIER;
+    // Desplazamiento 0x10. Estado: bit 0 UIF indica que hubo una actualización (se limpia escribiendo 0). Se usa.
+    volatile uint32_t SR;
+    // Desplazamiento 0x14. Generación de eventos: bit 0 UG carga PSC y ARR de inmediato. Se usa.
+    volatile uint32_t EGR;
+    // Desplazamiento 0x18. Modo de captura/comparación 1. No se usa.
+    volatile uint32_t CCMR1;
+    // Desplazamiento 0x1C. Modo de captura/comparación 2. No se usa.
+    volatile uint32_t CCMR2;
+    // Desplazamiento 0x20. Habilitación de captura/comparación. No se usa.
+    volatile uint32_t CCER;
+    // Desplazamiento 0x24. Valor actual del contador. No se usa.
+    volatile uint32_t CNT;
+    // Desplazamiento 0x28. Divisor del reloj del timer: el contador avanza cada PSC + 1 ciclos. Se usa.
+    volatile uint32_t PSC;
+    // Desplazamiento 0x2C. Valor de recarga: el contador va de 0 a ARR. Se usa.
+    volatile uint32_t ARR;
+} RegistrosTIM3;
+
+// Mapa de los registros del NVIC. Fuente: PM0214, sección NVIC (por verificar por Daniela).
+typedef struct {
+    // Desplazamiento 0x00. Habilita las interrupciones 0 a 31: escribir 1 en el bit n habilita la interrupción n; escribir 0 no hace nada.
+    volatile uint32_t ISER0;
+} RegistrosNVIC;
+
 // Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
 // Cada puntero apunta a la dirección base del periférico.
 #define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
@@ -108,6 +157,10 @@ typedef struct {
 #define FLASH ((RegistrosFLASH *)FLASH_BASE)
 // Puntero a los registros de SysTick (se usa para SysTick->CTRL, LOAD y VAL).
 #define SysTick ((RegistrosSysTick *)SYSTICK_BASE)
+// Puntero a los registros de TIM3 (se usa para TIM3->PSC, ARR, CR1, DIER, SR y EGR).
+#define TIM3 ((RegistrosTIM3 *)TIM3_BASE)
+// Puntero a los registros del NVIC (se usa para NVIC->ISER0).
+#define NVIC ((RegistrosNVIC *)NVIC_BASE)
 
 // Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
 #define RCC_AHB1ENR_GPIOAEN (1U << 0)
@@ -166,5 +219,18 @@ typedef struct {
 #define SYSTICK_CTRL_TICKINT (1U << 1)
 // Bit 2 de SysTick CTRL: 1 usa el reloj del procesador, 0 usa AHB/8. Fuente: PM0214, sección SysTick (por verificar por Daniela).
 #define SYSTICK_CTRL_CLKSOURCE (1U << 2)
+
+// Bit 1 de RCC_APB1ENR: 1 enciende el reloj de TIM3. Fuente: RM0390, capítulo 6 (RCC), registro RCC_APB1ENR (sección por verificar por Daniela).
+#define RCC_APB1ENR_TIM3EN (1U << 1)
+// Bit 0 de TIM3 CR1 (CEN): 1 enciende el contador del timer. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_CR1 (sección por verificar por Daniela).
+#define TIM_CR1_CEN (1U << 0)
+// Bit 0 de TIM3 DIER (UIE): 1 habilita la interrupción de actualización. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_DIER (sección por verificar por Daniela).
+#define TIM_DIER_UIE (1U << 0)
+// Bit 0 de TIM3 SR (UIF): 1 indica que hubo una actualización. Es rc_w0: se limpia escribiendo 0 en este bit; escribir 1 no cambia nada. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_SR (sección por verificar por Daniela).
+#define TIM_SR_UIF (1U << 0)
+// Bit 0 de TIM3 EGR (UG): al escribir 1 se genera una actualización que carga PSC y ARR. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_EGR (sección por verificar por Daniela).
+#define TIM_EGR_UG (1U << 0)
+// Número de la interrupción de TIM3 (IRQ 29), que es la posición 16 + 29 = 45 de la tabla de vectores. Fuente: RM0390, sección 10.1.3, tabla 38.
+#define NUMERO_INTERRUPCION_TIM3 29U
 
 #endif

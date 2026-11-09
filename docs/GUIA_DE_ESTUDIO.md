@@ -11,6 +11,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 2 — Reloj a 84 MHz y base de tiempo SysTick](#paso-2--reloj-a-84-mhz-y-base-de-tiempo-systick)
 - [Paso 3 — Botones del shield (entradas con pull-up)](#paso-3--botones-del-shield-entradas-con-pull-up)
 - [Paso 4 — Primer píxel con GPIO](#paso-4--primer-píxel-con-gpio)
+- [Paso 5 — Framebuffer y refresco del panel con TIM3](#paso-5--framebuffer-y-refresco-del-panel-con-tim3)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -85,6 +86,16 @@ Cada término se define la primera vez que aparece, en una frase.
 | `BSRR` | Registro de solo escritura de un puerto: los bits 0 a 15 ponen pines en 1 y los bits 16 a 31 los ponen en 0, sin leer el registro. |
 | Push-pull | Tipo de salida que puede llevar el pin a 1 y a 0 activamente (`OTYPER = 0`); es el tipo por defecto. |
 | Flanco de subida | Instante en que una señal pasa de 0 a 1. |
+| Framebuffer | Arreglo en RAM con el color de cada píxel; el programa lo escribe y el refresco lo lee para dibujar el panel. |
+| Refresco | Repetir el dibujo del panel muchas veces por segundo; aquí cada fase se envía cada 4 ms (250 Hz la imagen completa). |
+| TIM3 | Temporizador de propósito general de 16 bits en el bus APB1; aquí genera una interrupción cada 1 ms. |
+| `PSC` (prescaler) | Registro de TIM3: el contador avanza una cuenta cada `PSC + 1` ciclos del reloj del timer. |
+| `ARR` (auto-recarga) | Registro de TIM3: el contador va de 0 a `ARR` y vuelve a 0; el periodo es `ARR + 1` cuentas. |
+| Evento de actualización (`UG`, `UIF`) | Momento en que el contador se desborda y se cargan `PSC` y `ARR`; `UG` lo fuerza y `UIF` es el flag que lo avisa. |
+| `rc_w0` | Tipo de bit que se limpia escribiendo 0; escribir 1 no cambia nada (por eso `SR = ~TIM_SR_UIF` no necesita leer). |
+| `ISER0` (NVIC) | Registro que habilita las interrupciones 0 a 31: escribir 1 en el bit `n` habilita la interrupción `n`. |
+| Registro con «sombra» | Registro cuyo valor escrito solo se aplica en la siguiente actualización (como `PSC`). |
+| Condición de carrera | Error posible cuando `main` y una interrupción usan el mismo dato a la vez; aquí solo produce un cuadro a medias. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -2449,6 +2460,7 @@ Encender un primer píxel del panel P10 usando solo GPIO normal, sin interrupcio
 - `inc/gpio_config.h` (modificado): constante `VELOCIDAD_ALTA`.
 - `src/gpio_config.c` (modificado): `escribir_pin` usa `BSRR`.
 - `main.c` (reescrito): ya no tiene LED ni botones; configura el panel y envía un píxel. Las versiones anteriores quedan en el Paso 3 y en el Paso 2.
+- El Paso 5 cambia después `registros_f446.h`, `panel.h`, `panel.c` y `main.c`: los que aparecen en esta sección son las **versiones del Paso 4**.
 
 ### Concepto de clase que se usa
 Salidas digitales de GPIO (`MODER`, `OSPEEDR`, `BSRR`), el reloj del puerto C y el manejo de una señal con flancos (CLK, LAT). Es el primer uso del panel HUB75 del proyecto; no viene de un ejemplo del profesor, sino de lo medido en el repositorio anterior (`docs/conexiones.md` y `docs/mapeo_pixeles.md`).
@@ -2860,6 +2872,730 @@ Decisiones menores del agente principal que Daniela puede objetar: la función d
    Con la fórmula medida: `bloque = 0 / 16 = 0` y `j = 0 % 16 = 0`; como `j < 8`, `x = 8·0 + (7 − 0) = 7` y `y = fase = 0`. G1 es la mitad de arriba, así que no se suma 8 a `y`.
 5. Si el panel quedara apagado, ¿qué es lo primero que se prueba y qué se cambia?
    La polaridad de OE: se intercambian `NIVEL_OE_ENCENDIDO` y `NIVEL_OE_APAGADO` en `panel.h` (y se recompila con `make clean && make`, porque el Makefile no vigila los encabezados).
+
+## Paso 5 — Framebuffer y refresco del panel con TIM3
+
+### Objetivo
+Dejar de enviar la imagen una sola vez (Paso 4) y refrescar el panel de forma automática: un **framebuffer** (un arreglo con el color de cada píxel) y una **interrupción de TIM3 cada 1 ms** que dibuja una fase (0, 1, 2, 3, 0, …). Con eso, `main` solo escribe píxeles con `encender_pixel(x, y, color)` y el panel los muestra. Se prueba con una secuencia de cinco dibujos: tres rellenos parciales de color, un marco y dos diagonales.
+
+### Archivos creados o modificados
+- `inc/registros_f446.h` (modificado): `APB1_BASE`, `TIM3_BASE`, `NVIC_BASE`, `RegistrosTIM3`, `RegistrosNVIC`, los punteros `TIM3` y `NVIC`, `RegistrosRCC` extendido hasta `APB1ENR` y las constantes de bits.
+- `inc/panel.h` (modificado): tamaño del tablero, constantes de la fórmula de mapeo, colores y las declaraciones de `iniciar_refresco_panel` y `encender_pixel`. Se quita `enviar_fase_con_un_bit`.
+- `src/panel.c` (modificado): framebuffer, `dibujar_fase`, `encender_pixel`, `iniciar_refresco_panel` y `TIM3_IRQHandler`.
+- `main.c` (reescrito): cuatro funciones de dibujo y la secuencia de pruebas. Las versiones anteriores de estos archivos quedan en los pasos 1 a 4, con notas.
+
+### Concepto de clase que se usa
+Temporizador de propósito general (TIM3: prescaler, auto-recarga y evento de actualización), interrupciones con el NVIC, `volatile` en un dato compartido entre `main` y la interrupción, y la separación entre quien dibuja (la interrupción refresca el panel) y quien decide qué se dibuja (`main`).
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó, hizo comprobaciones numéricas y no cambió nada; el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** `docs/mapeo_pixeles.md` (fórmula), `docs/conexiones.md` (pines y consumo), `stm32f446xx.h` y `core_cm4.h` de STM32CubeF4 (solo verificación): el `revisor` comprobó con `_Static_assert` los desplazamientos de `RegistrosRCC` hasta `APB1ENR` (`0x40`), de `RegistrosTIM3` (`CR1 0x00` a `ARR 0x2C`), `TIM3_BASE`, `NVIC_BASE`, `ISER0`, el bit `TIM3EN`, los bits `CEN`, `UIE`, `UIF` y `UG`, y `TIM3_IRQn = 29`. **Por verificar en el PDF:** los capítulos de `RCC_APB1ENR`, de los registros de TIM2 a TIM5 (comentados «por verificar») y la sección del NVIC en el PM0214.
+
+### Cómo se calcula el periodo de TIM3
+TIM3 recibe **84 MHz**: APB1 va a 42 MHz con divisor 2, y cuando el divisor del APB no es 1, los timers de ese bus reciben el doble (Paso 2).
+1. `PSC = 83`: el contador avanza una cuenta cada `PSC + 1 = 84` ciclos → 84 MHz / 84 = **1 MHz** (1 µs por cuenta).
+2. `ARR = 999`: el contador va de 0 a 999, o sea 1000 cuentas → 1000 µs = **1 ms**.
+3. Cada interrupción dibuja una fase; con 4 fases, cada imagen completa se refresca en 4 ms → **250 Hz**. Cada fase está encendida 1 ms de cada 4 ms.
+4. TIM3 es de 16 bits (`ARR` hasta 65 535): por eso el prescaler no puede ser 0 (84 000 no cabe en `ARR`).
+
+### Código explicado
+
+`inc/registros_f446.h`
+
+```c
+#ifndef REGISTROS_F446_H
+#define REGISTROS_F446_H
+
+#include <stdint.h>
+
+// Direcciones base de los buses. Fuente: RM0390 (manual de referencia STM32F446),
+// sección 2.2.2, tabla 1 «STM32F446xx register boundary addresses».
+#define PERIFERICOS_BASE (0x40000000U)
+// Bus AHB1: aquí están los puertos GPIO y el RCC.
+#define AHB1_BASE (PERIFERICOS_BASE + 0x20000U)
+// Bus APB1: aquí está TIM3. Fuente: RM0390, sección 2.2.2, tabla 1 (el APB1 empieza en 0x40000000).
+#define APB1_BASE (PERIFERICOS_BASE)
+
+// Direcciones base de cada periférico. Fuente: RM0390, sección 2.2.2, tabla 1.
+// Puerto A de GPIO (0x40020000).
+#define GPIOA_BASE (AHB1_BASE)
+// Puerto B de GPIO (0x40020400). Fuente: RM0390, sección 2.2.2, tabla 1.
+#define GPIOB_BASE (AHB1_BASE + 0x400U)
+// Puerto C de GPIO (0x40020800).
+#define GPIOC_BASE (AHB1_BASE + 0x800U)
+// Controlador de reloj RCC (0x40023800).
+#define RCC_BASE (AHB1_BASE + 0x3800U)
+// Interfaz de la memoria FLASH (0x40023C00). Fuente: RM0390, sección 2.2.2, tabla 1, fila «Flash interface register».
+#define FLASH_BASE (AHB1_BASE + 0x3C00U)
+// Timer de propósito general TIM3 (0x40000400). Fuente: RM0390, sección 2.2.2, tabla 1 (APB1_BASE + 0x400).
+#define TIM3_BASE (APB1_BASE + 0x400U)
+// Registros SysTick del núcleo Cortex-M4 (0xE000E010). Fuente: PM0214, sección «SysTick timer (STK)» (número de sección y tabla por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
+#define SYSTICK_BASE (0xE000E010U)
+// Registros del NVIC (controlador de interrupciones) del núcleo Cortex-M4 (0xE000E100). Fuente: PM0214, sección NVIC (por verificar por Daniela); coincide con core_cm4.h de CMSIS de ARM.
+#define NVIC_BASE (0xE000E100U)
+
+// Mapa de los registros del puerto: cada campo está 4 bytes después del anterior,
+// por eso el orden no se puede cambiar. Fuente: RM0390, capítulo 7, sección 7.4, tabla 26.
+typedef struct {
+    // Desplazamiento 0x00. Modo de cada pin: 2 bits por pin (00 entrada, 01 salida, 10 alterna, 11 analógico).
+    volatile uint32_t MODER;
+    // Desplazamiento 0x04. Tipo de salida de cada pin: 1 bit por pin (0 push-pull, 1 open-drain).
+    volatile uint32_t OTYPER;
+    // Desplazamiento 0x08. Velocidad de cambio de cada pin: 2 bits por pin.
+    volatile uint32_t OSPEEDR;
+    // Desplazamiento 0x0C. Resistencia pull-up o pull-down de cada pin: 2 bits por pin.
+    volatile uint32_t PUPDR;
+    // Desplazamiento 0x10. Lectura del estado de los pines de entrada: 1 bit por pin.
+    volatile uint32_t IDR;
+    // Desplazamiento 0x14. Valor que se saca por cada pin de salida: 1 bit por pin.
+    volatile uint32_t ODR;
+    // Desplazamiento 0x18. Pone (bits 0 a 15) o borra (bits 16 a 31) bits de ODR de forma atómica.
+    volatile uint32_t BSRR;
+    // Desplazamiento 0x1C. Bloquea la configuración de los pines hasta el próximo reinicio.
+    volatile uint32_t LCKR;
+    // Desplazamiento 0x20. Función alterna de los pines 0 a 7: 4 bits por pin.
+    volatile uint32_t AFRL;
+    // Desplazamiento 0x24. Función alterna de los pines 8 a 15: 4 bits por pin.
+    volatile uint32_t AFRH;
+} RegistrosGPIO;
+
+// Mapa de los registros del RCC (reloj). Cada campo está en su desplazamiento del manual.
+// Fuente: RM0390, capítulo 6, sección 6.3, «RCC registers», mapa de registros.
+typedef struct {
+    // Desplazamiento 0x00. Control del reloj (HSI, HSE, PLL). Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CR;
+    // Desplazamiento 0x04. Configuración del PLL. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t PLLCFGR;
+    // Desplazamiento 0x08. Configuración del reloj del sistema y de los buses. Se usa en el paso 2 (configurar_reloj).
+    volatile uint32_t CFGR;
+    // Desplazamiento 0x0C. Interrupciones del reloj. No se usa todavía.
+    volatile uint32_t CIR;
+    // Desplazamiento 0x10. Reinicia los puertos AHB1. No se usa todavía.
+    volatile uint32_t AHB1RSTR;
+    // Desplazamiento 0x14. Reinicia los periféricos AHB2. No se usa todavía.
+    volatile uint32_t AHB2RSTR;
+    // Desplazamiento 0x18. Reinicia los periféricos AHB3. No se usa todavía.
+    volatile uint32_t AHB3RSTR;
+    // Desplazamiento 0x1C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_0;
+    // Desplazamiento 0x20. Reinicia los periféricos del bus APB1. No se usa todavía.
+    volatile uint32_t APB1RSTR;
+    // Desplazamiento 0x24. Reinicia los periféricos del bus APB2. No se usa todavía.
+    volatile uint32_t APB2RSTR;
+    // Desplazamientos 0x28 y 0x2C. Reservados por el fabricante, no se usan.
+    uint32_t RESERVADO_1[2];
+    // Desplazamiento 0x30. Habilita el reloj de cada puerto GPIO (bit 0 = puerto A, bit 1 = puerto B, bit 2 = puerto C).
+    volatile uint32_t AHB1ENR;
+    // Desplazamiento 0x34. Habilita el reloj de los periféricos AHB2. No se usa todavía.
+    volatile uint32_t AHB2ENR;
+    // Desplazamiento 0x38. Habilita el reloj de los periféricos AHB3. No se usa todavía.
+    volatile uint32_t AHB3ENR;
+    // Desplazamiento 0x3C. Reservado por el fabricante, no se usa.
+    uint32_t RESERVADO_2;
+    // Desplazamiento 0x40. Habilita el reloj de los periféricos del bus APB1; se usa para TIM3 (bit 1).
+    volatile uint32_t APB1ENR;
+} RegistrosRCC;
+
+// Solo se define ACR: los demás registros de la FLASH no se usan todavía.
+typedef struct {
+    // Desplazamiento 0x00. Control de acceso a la FLASH: estados de espera (LATENCY, bits 3:0). Fuente: RM0390, sección 3.8.1.
+    volatile uint32_t ACR;
+} RegistrosFLASH;
+
+// Mapa de los registros de SysTick, mismo criterio que RegistrosGPIO.
+typedef struct {
+    // Desplazamiento 0x00. Control y estado: habilitar, interrupción y fuente de reloj (bits 0 a 2).
+    volatile uint32_t CTRL;
+    // Desplazamiento 0x04. Valor de recarga del contador, de 24 bits (bits 23:0).
+    volatile uint32_t LOAD;
+    // Desplazamiento 0x08. Valor actual del contador; escribir cualquier valor lo pone en 0.
+    volatile uint32_t VAL;
+    // Desplazamiento 0x0C. Calibración del contador. No se usa.
+    volatile uint32_t CALIB;
+} RegistrosSysTick;
+
+// Mapa de los registros de TIM3, en el orden del manual hasta ARR. Cada campo está en su desplazamiento.
+// Fuente: RM0390, capítulo de los timers de propósito general TIM2 a TIM5, mapa de registros (número de capítulo y sección por verificar por Daniela).
+typedef struct {
+    // Desplazamiento 0x00. Control 1: bit 0 CEN enciende el contador. Se usa para encender TIM3.
+    volatile uint32_t CR1;
+    // Desplazamiento 0x04. Control 2. No se usa.
+    volatile uint32_t CR2;
+    // Desplazamiento 0x08. Control del modo esclavo. No se usa.
+    volatile uint32_t SMCR;
+    // Desplazamiento 0x0C. Habilitación de interrupciones y DMA: bit 0 UIE habilita la interrupción de actualización. Se usa.
+    volatile uint32_t DIER;
+    // Desplazamiento 0x10. Estado: bit 0 UIF indica que hubo una actualización (se limpia escribiendo 0). Se usa.
+    volatile uint32_t SR;
+    // Desplazamiento 0x14. Generación de eventos: bit 0 UG carga PSC y ARR de inmediato. Se usa.
+    volatile uint32_t EGR;
+    // Desplazamiento 0x18. Modo de captura/comparación 1. No se usa.
+    volatile uint32_t CCMR1;
+    // Desplazamiento 0x1C. Modo de captura/comparación 2. No se usa.
+    volatile uint32_t CCMR2;
+    // Desplazamiento 0x20. Habilitación de captura/comparación. No se usa.
+    volatile uint32_t CCER;
+    // Desplazamiento 0x24. Valor actual del contador. No se usa.
+    volatile uint32_t CNT;
+    // Desplazamiento 0x28. Divisor del reloj del timer: el contador avanza cada PSC + 1 ciclos. Se usa.
+    volatile uint32_t PSC;
+    // Desplazamiento 0x2C. Valor de recarga: el contador va de 0 a ARR. Se usa.
+    volatile uint32_t ARR;
+} RegistrosTIM3;
+
+// Mapa de los registros del NVIC. Fuente: PM0214, sección NVIC (por verificar por Daniela).
+typedef struct {
+    // Desplazamiento 0x00. Habilita las interrupciones 0 a 31: escribir 1 en el bit n habilita la interrupción n; escribir 0 no hace nada.
+    volatile uint32_t ISER0;
+} RegistrosNVIC;
+
+// Punteros a los periféricos: se usan como GPIOA->ODR, RCC->AHB1ENR, etc.
+// Cada puntero apunta a la dirección base del periférico.
+#define GPIOA ((RegistrosGPIO *)GPIOA_BASE)
+// Puntero al puerto B de GPIO (botones B, C, D y E del shield).
+#define GPIOB ((RegistrosGPIO *)GPIOB_BASE)
+// Puntero al puerto C de GPIO (botón azul PC13).
+#define GPIOC ((RegistrosGPIO *)GPIOC_BASE)
+// Puntero al controlador de reloj RCC.
+#define RCC ((RegistrosRCC *)RCC_BASE)
+// Puntero a la interfaz de la FLASH (se usa para FLASH->ACR).
+#define FLASH ((RegistrosFLASH *)FLASH_BASE)
+// Puntero a los registros de SysTick (se usa para SysTick->CTRL, LOAD y VAL).
+#define SysTick ((RegistrosSysTick *)SYSTICK_BASE)
+// Puntero a los registros de TIM3 (se usa para TIM3->PSC, ARR, CR1, DIER, SR y EGR).
+#define TIM3 ((RegistrosTIM3 *)TIM3_BASE)
+// Puntero a los registros del NVIC (se usa para NVIC->ISER0).
+#define NVIC ((RegistrosNVIC *)NVIC_BASE)
+
+// Bit 0 de RCC_AHB1ENR: 1 enciende el reloj del puerto A. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOAEN (1U << 0)
+// Bit 1 de RCC_AHB1ENR: 1 enciende el reloj del puerto B. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOBEN (1U << 1)
+// Bit 2 de RCC_AHB1ENR: 1 enciende el reloj del puerto C. Fuente: RM0390, sección 6.3.10.
+#define RCC_AHB1ENR_GPIOCEN (1U << 2)
+
+// Bit 24 de RCC_CR: 1 enciende el PLL. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLON (1U << 24)
+// Bit 25 de RCC_CR: 1 indica que el PLL ya enganchó y está listo. Fuente: RM0390, sección 6.3.1.
+#define RCC_CR_PLLRDY (1U << 25)
+
+// Posición del campo PLLM (divisor de entrada del PLL) en RCC_PLLCFGR, bits 5:0. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_POSICION 0U
+// Máscara de los 6 bits de PLLM, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLM_MASCARA (0x3FU << RCC_PLLCFGR_PLLM_POSICION)
+// Posición del campo PLLN (multiplicador del VCO) en RCC_PLLCFGR, bits 14:6. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_POSICION 6U
+// Máscara de los 9 bits de PLLN, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLN_MASCARA (0x1FFU << RCC_PLLCFGR_PLLN_POSICION)
+// Posición del campo PLLP (divisor de salida del PLL) en RCC_PLLCFGR, bits 17:16. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_POSICION 16U
+// Máscara de los 2 bits de PLLP, ya desplazada a su posición. Fuente: RM0390, sección 6.3.2.
+#define RCC_PLLCFGR_PLLP_MASCARA (0x3U << RCC_PLLCFGR_PLLP_POSICION)
+
+// Posición del campo SW (fuente del reloj del sistema) en RCC_CFGR, bits 1:0. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_POSICION 0U
+// Máscara de los 2 bits de SW, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SW_MASCARA (0x3U << RCC_CFGR_SW_POSICION)
+// Posición del campo SWS (fuente que el hardware está usando de verdad) en RCC_CFGR, bits 3:2. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_POSICION 2U
+// Máscara de los 2 bits de SWS, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_SWS_MASCARA (0x3U << RCC_CFGR_SWS_POSICION)
+// Posición del campo HPRE (divisor del AHB) en RCC_CFGR, bits 7:4. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_POSICION 4U
+// Máscara de los 4 bits de HPRE, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_HPRE_MASCARA (0xFU << RCC_CFGR_HPRE_POSICION)
+// Posición del campo PPRE1 (divisor del APB1) en RCC_CFGR, bits 12:10. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_POSICION 10U
+// Máscara de los 3 bits de PPRE1, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE1_MASCARA (0x7U << RCC_CFGR_PPRE1_POSICION)
+// Posición del campo PPRE2 (divisor del APB2) en RCC_CFGR, bits 15:13. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_POSICION 13U
+// Máscara de los 3 bits de PPRE2, ya desplazada a su posición. Fuente: RM0390, sección 6.3.3.
+#define RCC_CFGR_PPRE2_MASCARA (0x7U << RCC_CFGR_PPRE2_POSICION)
+
+// Posición del campo LATENCY (estados de espera de la FLASH) en FLASH_ACR, bits 3:0. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_POSICION 0U
+// Máscara de los 4 bits de LATENCY, ya desplazada a su posición. Fuente: RM0390, sección 3.8.1.
+#define FLASH_ACR_LATENCY_MASCARA (0xFU << FLASH_ACR_LATENCY_POSICION)
+
+// Bit 0 de SysTick CTRL: 1 enciende el contador. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_ENABLE (1U << 0)
+// Bit 1 de SysTick CTRL: 1 genera la interrupción al llegar el contador a 0. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_TICKINT (1U << 1)
+// Bit 2 de SysTick CTRL: 1 usa el reloj del procesador, 0 usa AHB/8. Fuente: PM0214, sección SysTick (por verificar por Daniela).
+#define SYSTICK_CTRL_CLKSOURCE (1U << 2)
+
+// Bit 1 de RCC_APB1ENR: 1 enciende el reloj de TIM3. Fuente: RM0390, capítulo 6 (RCC), registro RCC_APB1ENR (sección por verificar por Daniela).
+#define RCC_APB1ENR_TIM3EN (1U << 1)
+// Bit 0 de TIM3 CR1 (CEN): 1 enciende el contador del timer. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_CR1 (sección por verificar por Daniela).
+#define TIM_CR1_CEN (1U << 0)
+// Bit 0 de TIM3 DIER (UIE): 1 habilita la interrupción de actualización. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_DIER (sección por verificar por Daniela).
+#define TIM_DIER_UIE (1U << 0)
+// Bit 0 de TIM3 SR (UIF): 1 indica que hubo una actualización. Es rc_w0: se limpia escribiendo 0 en este bit; escribir 1 no cambia nada. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_SR (sección por verificar por Daniela).
+#define TIM_SR_UIF (1U << 0)
+// Bit 0 de TIM3 EGR (UG): al escribir 1 se genera una actualización que carga PSC y ARR. Fuente: RM0390, capítulo de TIM2 a TIM5, registro TIM_EGR (sección por verificar por Daniela).
+#define TIM_EGR_UG (1U << 0)
+// Número de la interrupción de TIM3 (IRQ 29), que es la posición 16 + 29 = 45 de la tabla de vectores. Fuente: RM0390, sección 10.1.3, tabla 38.
+#define NUMERO_INTERRUPCION_TIM3 29U
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 4:
+- `APB1_BASE` (`0x40000000`) y `TIM3_BASE` (`APB1_BASE + 0x400`, tabla 1 del RM0390). `NVIC_BASE` (`0xE000E100`) es del núcleo (PM0214).
+- `RegistrosRCC` crece con `AHB2ENR` (`0x34`), `AHB3ENR` (`0x38`), un hueco reservado (`0x3C`) y `APB1ENR` (`0x40`); sin el hueco, `APB1ENR` quedaría 4 bytes más arriba.
+- `RegistrosTIM3`: los registros en el orden del manual hasta `ARR`. Se usan `CR1` (bit `CEN` enciende el contador), `DIER` (bit `UIE` habilita la interrupción), `SR` (bit `UIF` marca la actualización; es `rc_w0`: se limpia escribiendo 0), `EGR` (bit `UG` fuerza una actualización), `PSC` y `ARR`. Los demás están para mantener los desplazamientos.
+- `RegistrosNVIC`: solo `ISER0`; escribir 1 en el bit `n` habilita la interrupción `n` (0 a 31) y escribir 0 no cambia nada. TIM3 es la 29 (`NUMERO_INTERRUPCION_TIM3`, RM0390, tabla 38).
+- `RCC_APB1ENR_TIM3EN` (bit 1), `TIM_CR1_CEN`, `TIM_DIER_UIE`, `TIM_SR_UIF` y `TIM_EGR_UG` (bit 0 cada uno).
+
+`inc/panel.h`
+
+```c
+#ifndef PANEL_H
+#define PANEL_H
+
+#include "gpio_config.h"
+
+// Pin R1 del panel (HUB75 pin 1), conectado a PC0. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R1 0U
+// Pin G1 del panel (HUB75 pin 2), conectado a PC1. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G1 1U
+// Pin B1 del panel (HUB75 pin 3), conectado a PC2. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B1 2U
+// Pin R2 del panel (HUB75 pin 5), conectado a PC3. Fuente: docs/conexiones.md.
+#define PIN_PANEL_R2 3U
+// Pin G2 del panel (HUB75 pin 6), conectado a PC4. Fuente: docs/conexiones.md.
+#define PIN_PANEL_G2 4U
+// Pin B2 del panel (HUB75 pin 7), conectado a PC5. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B2 5U
+// Pin OE del panel (HUB75 pin 15), conectado a PC6. Fuente: docs/conexiones.md.
+#define PIN_PANEL_OE 6U
+// Pin LAT del panel (HUB75 pin 14), conectado a PC7. Fuente: docs/conexiones.md.
+#define PIN_PANEL_LAT 7U
+// Pin CLK del panel (HUB75 pin 13), conectado a PC8. Fuente: docs/conexiones.md.
+#define PIN_PANEL_CLK 8U
+// Pin A del panel (HUB75 pin 9), conectado a PC10. Fuente: docs/conexiones.md.
+#define PIN_PANEL_A 10U
+// Pin B de selección de fase del panel (HUB75 pin 10), conectado a PC11. Fuente: docs/conexiones.md.
+#define PIN_PANEL_B 11U
+
+// Bits que se desplazan por fase y por módulo: 4 bloques de 16. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_BITS_POR_FASE 64U
+// Ancho del tablero en píxeles (columnas x). Etapa 1: un solo panel de 32 columnas. En la etapa 2 cambia aquí.
+#define PANEL_ANCHO 32U
+// Alto del tablero en píxeles (filas y). Etapa 1: un solo panel de 16 filas. En la etapa 2 cambia aquí.
+#define PANEL_ALTO 16U
+// Número de fases del escaneo 1/4: cada fase enciende 4 filas (0, 1, 2, 3). Fuente: docs/mapeo_pixeles.md.
+#define PANEL_FASES 4U
+// Bits que se desplazan en cada bloque de 16 bits. Fuente: docs/mapeo_pixeles.md (bloque = bit / 16).
+#define PANEL_BITS_POR_BLOQUE 16U
+// Columnas que ocupa cada mitad de un bloque (8 para la mitad j < 8 y 8 para la mitad j >= 8). Fuente: docs/mapeo_pixeles.md.
+#define PANEL_COLUMNAS_POR_BLOQUE 8U
+// Separación en filas entre la mitad j < 8 y la mitad j >= 8 de un bloque: y = fase + 4. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_SEPARACION_FILAS 4U
+// Filas que hay entre la mitad de arriba y la de abajo del panel: R2, G2 y B2 suman 8 a y. Fuente: docs/mapeo_pixeles.md.
+#define PANEL_FILAS_MITAD_SUPERIOR 8U
+// Posición del bit de los colores de abajo (R2, G2, B2) dentro de datos: R2 es el bit 3. Fuente: desplazar_bit en src/panel.c.
+#define PANEL_DESPLAZAMIENTO_MITAD_INFERIOR 3U
+
+// Color negro: los tres bits de color en 0 (el pixel está apagado).
+#define COLOR_NEGRO 0U
+// Color rojo: solo el bit R (bit 0) en 1.
+#define COLOR_ROJO 1U
+// Color verde: solo el bit G (bit 1) en 1.
+#define COLOR_VERDE 2U
+// Color azul: solo el bit B (bit 2) en 1.
+#define COLOR_AZUL 4U
+
+// Nivel de OE que enciende el panel: 0 (OE activo en bajo). Confirmado en la placa (2026-11-09).
+// Si otro panel no enciende, se intercambian este valor y NIVEL_OE_APAGADO.
+#define NIVEL_OE_ENCENDIDO 0U
+// Nivel de OE que apaga el panel: 1, el opuesto de NIVEL_OE_ENCENDIDO. Confirmado en la placa (2026-11-09).
+#define NIVEL_OE_APAGADO 1U
+
+// Configura los pines del panel como salidas y los deja en un estado seguro.
+void configurar_panel(void);
+// Enciende TIM3 para que interrumpa cada 1 ms y el panel se refresque solo.
+void iniciar_refresco_panel(void);
+// Guarda el color (COLOR_NEGRO, COLOR_ROJO, COLOR_VERDE o COLOR_AZUL) del píxel (x, y) en el framebuffer.
+void encender_pixel(uint32_t x, uint32_t y, uint32_t color);
+
+#endif
+```
+
+- `PANEL_ANCHO` = 32 y `PANEL_ALTO` = 16: el tamaño del tablero en un solo lugar (etapa 2: se cambian aquí).
+- `PANEL_FASES` = 4, `PANEL_BITS_POR_BLOQUE` = 16, `PANEL_COLUMNAS_POR_BLOQUE` = 8, `PANEL_SEPARACION_FILAS` = 4, `PANEL_FILAS_MITAD_SUPERIOR` = 8 y `PANEL_DESPLAZAMIENTO_MITAD_INFERIOR` = 3: los números de la fórmula medida, con nombre.
+- `COLOR_NEGRO` = 0, `COLOR_ROJO` = 1, `COLOR_VERDE` = 2 y `COLOR_AZUL` = 4: R es el bit 0, G el bit 1 y B el bit 2 (mismo orden que `datos` en `desplazar_bit`). Sumar bits mezcla colores (rojo + verde = 3, amarillo).
+
+`src/panel.c`
+
+```c
+#include "panel.h"
+
+// Divisor de TIM3: 84 MHz / (83 + 1) = 1 MHz, es decir, el contador avanza una cuenta cada 1 µs.
+#define TIM3_PRESCALER 83U
+// Valor de recarga de TIM3: 1 MHz / (999 + 1) = 1 kHz, es decir, una interrupción cada 1 ms.
+#define TIM3_AUTORRECARGA 999U
+
+// Imagen del tablero: un color por píxel, indexado [y][x]. Los bits 0 a 2 son R, G y B.
+// volatile porque la interrupción de TIM3 lee este arreglo mientras main lo escribe.
+// Está en .bss, así que empieza en 0 (COLOR_NEGRO).
+static volatile uint8_t framebuffer[PANEL_ALTO][PANEL_ANCHO];
+// Fase que se dibuja en la siguiente interrupción de TIM3. Solo la usa la interrupción, por eso no necesita volatile.
+static uint32_t fase_actual = 0U;
+
+// Configura un pin del panel (puerto C) como salida push-pull, sin resistencia, con velocidad alta.
+static void configurar_salida_del_panel(uint32_t pin)
+{
+    // Datos de configuración del pin del panel.
+    ConfiguracionPin configuracion;
+    // Modo salida: el microcontrolador maneja el pin y saca el nivel que se le escriba.
+    configuracion.modo = MODO_SALIDA;
+    // Número del pin dentro del puerto C.
+    configuracion.pin = pin;
+    // Sin pull-up ni pull-down: el pin lo domina solo la salida.
+    configuracion.resistencia = RESISTENCIA_NINGUNA;
+    // Velocidad alta: los flancos de CLK y LAT tienen que ser rápidos.
+    configuracion.velocidad = VELOCIDAD_ALTA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion.funcion_alterna = 0U;
+    // Se escribe la configuración en el puerto C.
+    configurar_pin(GPIOC, configuracion);
+}
+
+// Desplaza un bit por los seis colores. datos lleva en sus bits 0 a 5 los valores de R1, G1, B1, R2, G2 y B2.
+static void desplazar_bit(uint32_t datos)
+{
+    // R1 sale por PC0: se toma el bit 0 de datos (el desplazamiento es el número del pin).
+    escribir_pin(GPIOC, PIN_PANEL_R1, (datos >> PIN_PANEL_R1) & 1U);
+    // G1 sale por PC1: se toma el bit 1 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_G1, (datos >> PIN_PANEL_G1) & 1U);
+    // B1 sale por PC2: se toma el bit 2 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_B1, (datos >> PIN_PANEL_B1) & 1U);
+    // R2 sale por PC3: se toma el bit 3 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_R2, (datos >> PIN_PANEL_R2) & 1U);
+    // G2 sale por PC4: se toma el bit 4 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_G2, (datos >> PIN_PANEL_G2) & 1U);
+    // B2 sale por PC5: se toma el bit 5 de datos.
+    escribir_pin(GPIOC, PIN_PANEL_B2, (datos >> PIN_PANEL_B2) & 1U);
+    // CLK en 1: el panel toma el bit de los pines de color en este flanco de subida.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 1U);
+    // CLK en 0: deja CLK listo para el siguiente bit.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 0U);
+}
+
+// Configura los pines del panel. Primero se dejan en un nivel seguro y después pasan a salida.
+void configurar_panel(void)
+{
+    // Se enciende el reloj del puerto C antes de escribir sus registros.
+    habilitar_reloj_puerto(GPIOC);
+    // OE apagado antes de ser salida: el panel no debe mostrar basura mientras se configura.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_APAGADO);
+    // CLK en 0 antes de ser salida: el reset deja ODR en 0, pero se escribe por claridad.
+    escribir_pin(GPIOC, PIN_PANEL_CLK, 0U);
+    // LAT en 0 antes de ser salida: el panel no debe cargar datos mientras se configura.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 0U);
+    // R1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_R1);
+    // G1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_G1);
+    // B1 como salida.
+    configurar_salida_del_panel(PIN_PANEL_B1);
+    // R2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_R2);
+    // G2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_G2);
+    // B2 como salida.
+    configurar_salida_del_panel(PIN_PANEL_B2);
+    // OE como salida.
+    configurar_salida_del_panel(PIN_PANEL_OE);
+    // LAT como salida.
+    configurar_salida_del_panel(PIN_PANEL_LAT);
+    // CLK como salida.
+    configurar_salida_del_panel(PIN_PANEL_CLK);
+    // A como salida (selección de fase).
+    configurar_salida_del_panel(PIN_PANEL_A);
+    // B como salida (selección de fase).
+    configurar_salida_del_panel(PIN_PANEL_B);
+}
+
+// Dibuja una fase completa con los colores del framebuffer. Fórmula de docs/mapeo_pixeles.md:
+//   bloque = bit / 16, j = bit % 16
+//   si j < 8:  x = 8 * bloque + (7 - j), y = fase        (de derecha a izquierda)
+//   si j >= 8: x = 8 * bloque + (j - 8), y = fase + 4    (de izquierda a derecha)
+// R2, G2 y B2 usan la fila y + 8.
+static void dibujar_fase(uint32_t fase)
+{
+    // Se desplazan los 64 bits de la fase, uno por uno, con CLK.
+    for (uint32_t bit = 0U; bit < PANEL_BITS_POR_FASE; bit++) {
+        // Bloque de 16 bits al que pertenece el bit (0 a 3).
+        uint32_t bloque = bit / PANEL_BITS_POR_BLOQUE;
+        // Posición del bit dentro de su bloque (0 a 15).
+        uint32_t j = bit % PANEL_BITS_POR_BLOQUE;
+        // Columna del píxel de la mitad de arriba que corresponde a este bit.
+        uint32_t x;
+        // Fila del píxel de la mitad de arriba que corresponde a este bit.
+        uint32_t y;
+        // Mitad j < 8: las columnas van de derecha a izquierda y la fila es la de la fase.
+        if (j < PANEL_COLUMNAS_POR_BLOQUE) {
+            x = PANEL_COLUMNAS_POR_BLOQUE * bloque + (PANEL_COLUMNAS_POR_BLOQUE - 1U - j);
+            y = fase;
+        // Mitad j >= 8: las columnas van de izquierda a derecha y la fila es la de la fase + 4.
+        } else {
+            x = PANEL_COLUMNAS_POR_BLOQUE * bloque + (j - PANEL_COLUMNAS_POR_BLOQUE);
+            y = fase + PANEL_SEPARACION_FILAS;
+        }
+        // datos: bits 0 a 2 = R1, G1, B1 (fila y); bits 3 a 5 = R2, G2, B2 (fila y + 8), desplazados 3 posiciones.
+        uint32_t datos = framebuffer[y][x] | (framebuffer[y + PANEL_FILAS_MITAD_SUPERIOR][x] << PANEL_DESPLAZAMIENTO_MITAD_INFERIOR);
+        // Se desplazan los 6 bits de color de este píxel.
+        desplazar_bit(datos);
+    }
+    // OE apagado mientras cambian LAT y la fase: así no se ve basura durante el cambio.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_APAGADO);
+    // LAT en 1: el latch pasa los 64 bits desplazados a la salida. Va después de desplazar todos los bits.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 1U);
+    // LAT en 0: termina el pulso de latch.
+    escribir_pin(GPIOC, PIN_PANEL_LAT, 0U);
+    // A toma el bit 0 de la fase (selección de fila dentro del escaneo 1/4).
+    escribir_pin(GPIOC, PIN_PANEL_A, fase & 1U);
+    // B toma el bit 1 de la fase.
+    escribir_pin(GPIOC, PIN_PANEL_B, (fase >> 1U) & 1U);
+    // OE encendido: el panel muestra la fase recién cargada.
+    escribir_pin(GPIOC, PIN_PANEL_OE, NIVEL_OE_ENCENDIDO);
+}
+
+// Guarda el color de un píxel en el framebuffer. Si x o y están fuera del tablero, no hace nada:
+// escribir fuera del arreglo dañaría otra zona de la memoria.
+void encender_pixel(uint32_t x, uint32_t y, uint32_t color)
+{
+    // Solo se escribe si x está dentro de las columnas y y dentro de las filas del tablero.
+    if (x < PANEL_ANCHO && y < PANEL_ALTO) {
+        // Se guarda el color en 3 bits (R = bit 0, G = bit 1, B = bit 2). Cabe en uint8_t sin perder datos.
+        framebuffer[y][x] = (uint8_t)color;
+    }
+}
+
+// Enciende TIM3 para que interrumpa cada 1 ms. Cada interrupción dibuja una fase del panel.
+void iniciar_refresco_panel(void)
+{
+    // (a) Se enciende el reloj de TIM3 en el bus APB1. |= no cambia los demás bits de RCC->APB1ENR.
+    RCC->APB1ENR |= RCC_APB1ENR_TIM3EN;
+    // Variable que solo sirve para leer el registro; el valor leído no se usa.
+    volatile uint32_t lectura_descartada;
+    // Dos lecturas después de habilitar el reloj, como en habilitar_reloj_puerto: el periférico necesita unos ciclos antes de usarse.
+    lectura_descartada = RCC->APB1ENR;
+    lectura_descartada = RCC->APB1ENR;
+    // El valor leído no se usa: (void) le dice al compilador que se descarta a propósito (evita la advertencia).
+    (void)lectura_descartada;
+    // (b) Divisor y valor de recarga: el contador cuenta de 0 a 999 con un reloj de 1 MHz, es decir, 1 ms.
+    TIM3->PSC = TIM3_PRESCALER;
+    TIM3->ARR = TIM3_AUTORRECARGA;
+    // (c) UG carga PSC y ARR en el momento; sin esto, el divisor nuevo esperaría a la primera actualización.
+    TIM3->EGR = TIM_EGR_UG;
+    // (d) Se limpia el UIF que dejó UG: se escribe 0 en ese bit y 1 en los demás (rc_w0 no cambia con 1).
+    TIM3->SR = ~TIM_SR_UIF;
+    // (e) Se habilita la interrupción de actualización de TIM3 (UIE).
+    TIM3->DIER |= TIM_DIER_UIE;
+    // (f) Se habilita la IRQ 29 en el NVIC. Escribir 0 en los demás bits no cambia nada, por eso no hace falta leer ISER0.
+    NVIC->ISER0 = (1U << NUMERO_INTERRUPCION_TIM3);
+    // (g) Se enciende el contador de TIM3 (CEN). A partir de aquí llegan interrupciones cada 1 ms.
+    TIM3->CR1 |= TIM_CR1_CEN;
+}
+
+// Manejador de la interrupción de TIM3. El nombre es el de la tabla de vectores de crt0.S, así que reemplaza al alias débil.
+// Se ejecuta cada 1 ms y dibuja una fase (0, 1, 2, 3, 0...): cada fase se repite 250 veces por segundo.
+void TIM3_IRQHandler(void)
+{
+    // Se limpia la causa de la interrupción (UIF) escribiendo 0 en ese bit; si no, la interrupción se repetiría sin fin.
+    TIM3->SR = ~TIM_SR_UIF;
+    // Se dibuja la fase actual con los colores que hay en el framebuffer.
+    dibujar_fase(fase_actual);
+    // Se pasa a la siguiente fase. % PANEL_FASES hace que después de la fase 3 vuelva a la 0.
+    fase_actual = (fase_actual + 1U) % PANEL_FASES;
+}
+```
+
+- **`framebuffer`:** 16 × 32 = 512 bytes, un byte por píxel, indexado `[y][x]`. `volatile` porque lo escribe `main` y lo lee la interrupción. Empieza en 0 (negro) por estar en `.bss`.
+- **`fase_actual`:** solo la usa la interrupción, por eso no es `volatile`.
+- **`dibujar_fase(fase)`:** para cada uno de los 64 bits calcula el píxel con la fórmula medida:
+  1. `bloque = bit / 16` y `j = bit % 16`.
+  2. Si `j < 8`: `x = 8·bloque + (7 − j)`, `y = fase`. Si no: `x = 8·bloque + (j − 8)`, `y = fase + 4`.
+  3. `datos = framebuffer[y][x] | (framebuffer[y + 8][x] << 3)`: el color de arriba en los bits 0 a 2 (R1, G1, B1) y el de abajo en los bits 3 a 5 (R2, G2, B2).
+  4. `desplazar_bit(datos)`. Al final: OE apagado, pulso de LAT, A y B con la fase, OE encendido (igual que en el Paso 4).
+  Comprobación: fase 0, bit 0 → `bloque 0`, `j 0`, `x = 7`, `y = 0`, el píxel del Paso 4. El `revisor` comprobó con un programa de PC que, para las 4 fases y los 64 bits, `x` va de 0 a 31, `y + 8` llega a 15 como máximo y cada fase cubre 64 celdas distintas sin huecos.
+- **`encender_pixel`:** guarda el color solo si `x < 32` e `y < 16`; una escritura fuera del arreglo dañaría otra zona de la memoria.
+- **`iniciar_refresco_panel`:**
+  - (a) `APB1ENR |= TIM3EN` enciende el reloj de TIM3 (sin él, sus registros no responden), con las dos lecturas descartadas del patrón de `habilitar_reloj_puerto`.
+  - (b) `PSC = 83` y `ARR = 999`.
+  - (c) `EGR = UG`: `PSC` solo se carga en una actualización; sin `UG`, el timer usaría `PSC = 0` hasta el primer desborde.
+  - (d) `SR = ~TIM_SR_UIF`: limpia el `UIF` que dejó el `UG` (0 en el bit 0 y 1 en los demás, que en `rc_w0` no cambia nada). Va **antes** de habilitar la interrupción para que no salte una interrupción falsa.
+  - (e) `DIER |= UIE`: habilita la interrupción en TIM3.
+  - (f) `NVIC->ISER0 = 1 << 29`: la habilita también en el NVIC. Hacen falta las dos cosas.
+  - (g) `CR1 |= CEN`: arranca el contador.
+- **`TIM3_IRQHandler`:** el nombre es el de `crt0.S` y reemplaza al alias débil (el vector 45, en `0x080000B4`, contiene `0x08000829`, la función con el bit Thumb). Primero limpia `UIF` (si no, la interrupción se repetiría sin parar), dibuja la fase actual y avanza con `(fase_actual + 1) % 4`.
+
+`main.c`
+
+```c
+#include "system_config.h"
+#include "panel.h"
+
+// Pone en negro todos los píxeles del tablero.
+static void limpiar_pantalla(void)
+{
+    // Recorre todas las filas del tablero.
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // Recorre todas las columnas de la fila.
+        for (uint32_t x = 0U; x < PANEL_ANCHO; x++) {
+            // Pone el píxel (x, y) en negro.
+            encender_pixel(x, y, COLOR_NEGRO);
+        }
+    }
+}
+
+// Pinta 1 de cada 4 píxeles (x e y pares) con el color dado. Es parcial para limitar la corriente de la fuente de 3 A.
+static void rellenar_parcial(uint32_t color)
+{
+    // Recorre todas las filas del tablero.
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // Recorre todas las columnas de la fila.
+        for (uint32_t x = 0U; x < PANEL_ANCHO; x++) {
+            // Solo se pintan los píxeles con x par e y par: queda 1 de cada 4 encendido.
+            if ((x % 2U) == 0U && (y % 2U) == 0U) {
+                // Pone el píxel (x, y) en el color pedido.
+                encender_pixel(x, y, color);
+            }
+        }
+    }
+}
+
+// Dibuja un marco completo alrededor del tablero: la fila de arriba, la de abajo, la columna izquierda y la derecha.
+static void dibujar_marco(uint32_t color)
+{
+    // Recorre las columnas para pintar la fila de arriba (y = 0) y la de abajo (y = PANEL_ALTO - 1).
+    for (uint32_t x = 0U; x < PANEL_ANCHO; x++) {
+        // Fila de arriba.
+        encender_pixel(x, 0U, color);
+        // Fila de abajo.
+        encender_pixel(x, PANEL_ALTO - 1U, color);
+    }
+    // Recorre las filas para pintar la columna de la izquierda (x = 0) y la de la derecha (x = PANEL_ANCHO - 1).
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // Columna de la izquierda.
+        encender_pixel(0U, y, color);
+        // Columna de la derecha.
+        encender_pixel(PANEL_ANCHO - 1U, y, color);
+    }
+}
+
+// Dibuja dos diagonales de esquina a esquina con el color dado.
+static void dibujar_diagonales(uint32_t color)
+{
+    // Recorre las filas: en cada una se pintan dos píxeles, uno de cada diagonal.
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // x1 crece de 0 a PANEL_ANCHO - 1 a medida que y crece de 0 a PANEL_ALTO - 1: es la diagonal de arriba a la izquierda hacia abajo a la derecha.
+        uint32_t x1 = (y * (PANEL_ANCHO - 1U)) / (PANEL_ALTO - 1U);
+        // x2 es el espejo de x1: es la diagonal de arriba a la derecha hacia abajo a la izquierda.
+        uint32_t x2 = (PANEL_ANCHO - 1U) - x1;
+        // Pone el píxel de la primera diagonal en la fila y.
+        encender_pixel(x1, y, color);
+        // Pone el píxel de la segunda diagonal en la fila y.
+        encender_pixel(x2, y, color);
+    }
+}
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick), que usa esperar_milisegundos.
+    iniciar_systick();
+
+    // Se configuran los pines del panel como salidas.
+    configurar_panel();
+    // Se enciende TIM3: desde aquí, una interrupción cada 1 ms dibuja una fase del framebuffer en el panel.
+    iniciar_refresco_panel();
+
+    while (1) {
+        // Dibujo 1: se debe ver 1 de cada 4 píxeles en rojo durante 2 s.
+        limpiar_pantalla();
+        rellenar_parcial(COLOR_ROJO);
+        esperar_milisegundos(2000U);
+
+        // Dibujo 2: se debe ver 1 de cada 4 píxeles en verde durante 2 s.
+        limpiar_pantalla();
+        rellenar_parcial(COLOR_VERDE);
+        esperar_milisegundos(2000U);
+
+        // Dibujo 3: se debe ver 1 de cada 4 píxeles en azul durante 2 s.
+        limpiar_pantalla();
+        rellenar_parcial(COLOR_AZUL);
+        esperar_milisegundos(2000U);
+
+        // Dibujo 4: se debe ver un marco rojo completo alrededor del panel durante 2 s.
+        limpiar_pantalla();
+        dibujar_marco(COLOR_ROJO);
+        esperar_milisegundos(2000U);
+
+        // Dibujo 5: se deben ver dos diagonales verdes de esquina a esquina durante 2 s.
+        limpiar_pantalla();
+        dibujar_diagonales(COLOR_VERDE);
+        esperar_milisegundos(2000U);
+    }
+}
+```
+
+- `limpiar_pantalla`: dos `for` que ponen `COLOR_NEGRO` en todos los píxeles.
+- `rellenar_parcial(color)`: pinta los píxeles con `x` par **e** `y` par, o sea 1 de cada 4 (128 píxeles). Limita la corriente de la fuente de 3 A.
+- `dibujar_marco(color)`: la fila 0, la fila 15, la columna 0 y la columna 31.
+- `dibujar_diagonales(color)`: por cada fila `y`, `x1 = y · 31 / 15` (división entera) y `x2 = 31 − x1`; en `y = 0` son `0` y `31`, y en `y = 15` son `31` y `0`.
+- Orden en `main`: reloj, SysTick, `configurar_panel()` (pines listos y OE apagado) y **al final** `iniciar_refresco_panel()`: la interrupción no puede arrancar antes de que los pines sean salida. Después, el `while (1)` con los cinco dibujos de 2 s (`esperar_milisegundos` sigue funcionando porque SysTick cuenta aunque TIM3 interrumpa).
+
+### Tiempo de la interrupción y prioridad (estimaciones del `revisor`, sin medir)
+- Con `-O0`, `escribir_pin` son ~20 instrucciones y `desplazar_bit` ~225 (8 llamadas); con el resto del lazo son ~275 por bit y ~17 800 por fase. A 84 MHz son **210 a 320 µs** (hasta ~630 µs si cada instrucción paga los estados de espera de la FLASH, porque no se activó el prefetch ni el caché de instrucciones en `FLASH_ACR`). Cabe en 1 ms pero con poco margen en el peor caso. Si tardara más de 1 ms, TIM3 volvería a interrumpir sin parar y `main` casi no correría.
+- TIM3 y SysTick conservan la **misma prioridad** (valor de reset). No se pisan: una excepción de igual prioridad no interrumpe a la otra y la que llega después queda pendiente. SysTick puede retrasarse hasta lo que dure la interrupción de TIM3, pero no pierde ticks mientras eso dure menos de 1 ms. Daniela decidió **no fijar la prioridad**.
+- Si más adelante hiciera falta más velocidad, hay tres caminos (no se aplicó ninguno): activar `PRFTEN` e `ICEN` en `FLASH_ACR`, compilar con `-O1` o `-O2`, o escribir los seis colores con un solo `BSRR`.
+
+### Modificaciones y correcciones
+- `enviar_fase_con_un_bit` (Paso 4) se reemplaza por `dibujar_fase`, que lee el framebuffer.
+- `main.c` pasa de «un píxel» a la secuencia de cinco dibujos.
+- Sin correcciones del `revisor`: no encontró errores claros.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Periodo de la interrupción | 1 ms (`ARR = 999`) o 500 µs (`ARR = 499`) | 1 ms, `PSC = 83` |
+| Framebuffer | `[y][x]` por píxel, o guardado ya en orden de envío | `[y][x]`, un byte por píxel |
+| Codificación del color | R = bit 0, G = bit 1, B = bit 2, u otro orden | R = bit 0, G = bit 1, B = bit 2 |
+| Pruebas | Secuencia automática, con botones o un dibujo por grabación | Secuencia automática, 2 s por dibujo |
+| Corriente de las pruebas | Relleno parcial (1 de 4), medio panel o control de brillo con OE | Relleno parcial (1 de cada 4 píxeles) |
+| Alimentación | Protoboard o directo del cargador | 5 V directo del cargador de 3 A; solo el GND va a la protoboard |
+| Prioridad de TIM3 | Dejarla o fijarla | Dejarla sin fijar |
+
+Decisiones menores del agente principal o del `programador` que Daniela puede objetar: las constantes con nombre `TIM3_PRESCALER`, `TIM3_AUTORRECARGA` y `PANEL_DESPLAZAMIENTO_MITAD_INFERIOR`; ignorar coordenadas fuera del tablero en `encender_pixel`; las dos lecturas descartadas tras habilitar el reloj de TIM3; el marco en rojo y las diagonales en verde; y no definir un prototipo de `TIM3_IRQHandler`.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 2566`, `data 0`, `bss 522` (512 bytes del framebuffer más las variables).
+- El `revisor` comprobó con `_Static_assert` los desplazamientos y los bits contra `stm32f446xx.h` y `core_cm4.h`, la cobertura de la fórmula con un programa de PC, el orden de `iniciar_refresco_panel` y el vector: `TIM3_IRQHandler` en `0x08000828` y la palabra en `0x080000B4` es `0x08000829`.
+- `make flash`: voltaje 3,256 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- `nm`: `main = 0x0800030c`, `dibujar_fase = 0x0800069c`, `iniciar_refresco_panel = 0x080007b4`, `TIM3_IRQHandler = 0x08000828`, `framebuffer = 0x20000000`.
+- En la placa (2026-11-09): **se ven los cinco dibujos bien** (rejilla roja, verde y azul, marco rojo y diagonales verdes). Con esto queda comprobado el mapeo en las 32 columnas y que el relleno parcial no exige más de la fuente. Estimación de corriente: cada relleno unos 0,5 A (a partir de los ~2 A de una pantalla llena de `docs/conexiones.md`; no se midió).
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación ni en la prueba.
+- Límites conocidos que no son errores: al cambiar de dibujo hay un parpadeo breve (`main` borra y vuelve a escribir mientras la interrupción dibuja, por lo que se ve un cuadro a medias; no hay riesgo de memoria corrupta porque cada píxel es un byte), y el tiempo de la interrupción es una estimación.
+
+### Preguntas de autoevaluación
+1. ¿Por qué `PSC = 83` y `ARR = 999` dan una interrupción cada 1 ms?
+   TIM3 recibe 84 MHz; con `PSC = 83` el contador avanza cada 84 ciclos (1 MHz, 1 µs por cuenta) y con `ARR = 999` cuenta 1000 veces antes de desbordar → 1000 µs = 1 ms.
+2. ¿Para qué se fuerza `UG` y por qué se limpia `UIF` **antes** de habilitar la interrupción?
+   `PSC` es un registro con «sombra» que solo se carga en una actualización, y `UG` provoca una inmediata. Esa actualización deja `UIF` en 1; si no se limpiara antes de habilitar `UIE` y el NVIC, saltaría una interrupción falsa al arrancar.
+3. ¿Por qué hay que habilitar la interrupción en el timer (`UIE`) y en el NVIC, y qué pasa si el manejador no limpia `UIF`?
+   `UIE` deja que TIM3 pida la interrupción, y el NVIC decide si el procesador la atiende (`ISER0`, bit 29). Si el manejador no limpia `UIF`, la petición sigue activa y la interrupción se repite sin fin, dejando a `main` sin tiempo.
+4. ¿A qué píxeles corresponde el bit 25 de la fase 2?
+   `bloque = 25 / 16 = 1` y `j = 25 % 16 = 9`; como `j ≥ 8`: `x = 8·1 + (9 − 8) = 9` e `y = fase + 4 = 6`. El color de abajo viene de la fila `y + 8 = 14`.
+5. ¿Por qué el framebuffer es `volatile` y qué se ve si `main` lo cambia mientras la interrupción dibuja?
+   Porque lo escribe `main` y lo lee la interrupción, y el compilador no debe guardar copias de sus valores. Cada píxel es un byte, así que no se corrompe, pero puede verse un cuadro a medias (un parpadeo breve) hasta que `main` termina de escribir.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
