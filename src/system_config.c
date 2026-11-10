@@ -21,6 +21,20 @@
 // Es static porque solo este archivo la usa.
 static volatile uint32_t contador_milisegundos = 0U;
 
+// Temporizador de software que SysTick_Handler actualiza cada milisegundo.
+typedef struct {
+    // Milisegundos desde el último vencimiento. SysTick_Handler lo suma cada 1 ms y lo pone en 0 al vencer.
+    uint32_t contador;
+    // Milisegundos entre un vencimiento y el siguiente. Si vale 0, el temporizador está detenido.
+    uint32_t periodo;
+    // Vale 1 cuando el temporizador venció y todavía no se consultó. main la lee y la baja a 0.
+    uint32_t bandera;
+} TemporizadorSoftware;
+
+// Temporizador de movimiento: una sola instancia, arranca detenido (periodo 0).
+// Es volatile porque SysTick_Handler la cambia sin que main lo sepa.
+static volatile TemporizadorSoftware temporizador_movimiento = { 0U, 0U, 0U };
+
 void configurar_reloj(void)
 {
     // Se escribe solo el campo LATENCY: la máscara va entre paréntesis en su definición para que ~ afecte solo a esos bits, y no se sobrescribe FLASH->ACR completo.
@@ -80,6 +94,16 @@ void SysTick_Handler(void)
 {
     // Suma 1 milisegundo al contador.
     contador_milisegundos++;
+    // Suma 1 milisegundo al contador del temporizador de movimiento.
+    temporizador_movimiento.contador++;
+    // Si el periodo es 0, el temporizador está detenido y no vence. Si no, se compara con >= y no con ==:
+    // así, aunque el contador haya pasado del periodo (por ejemplo, al cambiar el periodo), igual vence.
+    if (temporizador_movimiento.periodo != 0U && temporizador_movimiento.contador >= temporizador_movimiento.periodo) {
+        // Se reinicia el contador para contar otra vez desde 0 hasta el periodo.
+        temporizador_movimiento.contador = 0U;
+        // Se avisa a main que el temporizador venció: la bandera queda en 1 hasta que main la consulte.
+        temporizador_movimiento.bandera = 1U;
+    }
 }
 
 void esperar_milisegundos(uint32_t milisegundos)
@@ -88,4 +112,29 @@ void esperar_milisegundos(uint32_t milisegundos)
     uint32_t instante_inicial = contador_milisegundos;
     // La resta funciona aunque el contador de 32 bits dé la vuelta. main espera aquí y la interrupción sigue contando.
     while ((contador_milisegundos - instante_inicial) < milisegundos) { }
+}
+
+void iniciar_temporizador_movimiento(uint32_t periodo_ms)
+{
+    // Primero se pone el contador en 0 para que la cuenta empiece desde el principio.
+    temporizador_movimiento.contador = 0U;
+    // Se baja la bandera para que no quede un vencimiento viejo pendiente.
+    temporizador_movimiento.bandera = 0U;
+    // Se guarda el periodo nuevo. Va al final porque, al escribirlo, el temporizador empieza a poder vencer.
+    temporizador_movimiento.periodo = periodo_ms;
+}
+
+uint32_t temporizador_movimiento_vencio(void)
+{
+    // Si la bandera está en 1, el temporizador venció desde la última consulta.
+    if (temporizador_movimiento.bandera != 0U) {
+        // Se baja la bandera para consumir el aviso: la siguiente consulta devuelve 0 si no vuelve a vencer.
+        // La interrupción podría poner la bandera en 1 justo entre el if y esta línea, y ese vencimiento se perdería.
+        // Con un periodo de cientos de ms no importa: el siguiente vencimiento se detecta igual.
+        temporizador_movimiento.bandera = 0U;
+        // Devuelve 1: sí venció.
+        return 1U;
+    }
+    // La bandera está en 0: no venció desde la última consulta.
+    return 0U;
 }

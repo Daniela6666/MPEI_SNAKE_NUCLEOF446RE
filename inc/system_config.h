@@ -14,5 +14,9 @@ void configurar_reloj(void);
 void iniciar_systick(void);
 // Espera la cantidad de milisegundos indicada. Mientras espera, la interrupción de SysTick sigue contando.
 void esperar_milisegundos(uint32_t milisegundos);
+// Deja el temporizador de movimiento contando desde 0 y con el periodo indicado, en milisegundos.
+void iniciar_temporizador_movimiento(uint32_t periodo_ms);
+// Devuelve 1 y baja la bandera si el temporizador de movimiento venció desde la última consulta; devuelve 0 si no.
+uint32_t temporizador_movimiento_vencio(void);
 
 #endif

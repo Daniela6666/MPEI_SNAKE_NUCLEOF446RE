@@ -13,6 +13,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 4 — Primer píxel con GPIO](#paso-4--primer-píxel-con-gpio)
 - [Paso 5 — Framebuffer y refresco del panel con TIM3](#paso-5--framebuffer-y-refresco-del-panel-con-tim3)
 - [Paso 6 — Biblioteca gráfica mínima](#paso-6--biblioteca-gráfica-mínima)
+- [Paso 7 — Mover un punto con los botones](#paso-7--mover-un-punto-con-los-botones)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -101,6 +102,11 @@ Cada término se define la primera vez que aparece, en una frase.
 | Fuente de mapa de bits | Dibujos de las letras o dígitos guardados como bits (aquí 3x5, un byte por fila). |
 | Literal binario (`0b…`) | Número escrito en binario en el código, por ejemplo `0b101`; es una extensión de GCC, no C estándar. |
 | Dibujo transparente | Dibujo que solo enciende sus píxeles y no apaga los demás, por lo que hay que borrar antes de redibujar. |
+| Temporizador de software | Contador que la interrupción de SysTick actualiza cada 1 ms y que avisa con una bandera cuando pasó su periodo; no bloquea el programa. |
+| Bandera (flag) | Variable que vale 1 cuando ocurrió un evento; quien la consulta la baja a 0 para consumir el aviso. |
+| Sondeo (polling) | Leer el estado de una entrada una y otra vez en el bucle principal, en vez de esperar una interrupción. |
+| Máscara de botones | Número con un bit por botón (`BOTON_A` a `BOTON_F`) que `leer_botones` devuelve con un 1 en cada botón presionado. |
+| Antirrebote (debounce) | Técnica que ignora los cambios del botón durante unos milisegundos para contar una sola pulsación; no hizo falta en este paso. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -1434,6 +1440,7 @@ Subir el reloj del sistema de 16 MHz (HSI, el reloj con el que arranca el chip) 
 - `main.c` (modificado): ya no configura el botón; hace parpadear el LED a 1 Hz con `esperar_milisegundos`.
 - La versión de `registros_f446.h` y de `main.c` del paso 1 se conserva en la pieza 4 del Paso 1, con una nota (decisión de Daniela, opción a).
 - El Paso 3 cambia otra vez `registros_f446.h` y `main.c` (y `gpio_config.*`): los que aparecen en esta sección son las **versiones del Paso 2**.
+- El Paso 7 agrega el temporizador de software a `system_config.*` y reescribe `main.c`: los que aparecen en esta sección son las **versiones del Paso 2**.
 
 ### Concepto de clase que se usa
 Reloj del sistema (RCC y PLL), estados de espera de la FLASH, SysTick, interrupciones y variables `volatile`. Los archivos `system_config.*` son los que `CLAUDE.md` lista como base del profesor (ejemplos 4, 7 y 24); aquí se reescribieron con nuestros structs y nombres, sin CMSIS.
@@ -3613,6 +3620,7 @@ Tener funciones para dibujar sobre el framebuffer sin tocar el hardware: borrar 
 - `inc/panel.h` (modificado): cuatro colores nuevos (`COLOR_AMARILLO`, `COLOR_MAGENTA`, `COLOR_CIAN`, `COLOR_BLANCO`) y el comentario de `encender_pixel`.
 - `main.c` (reescrito): las dos pantallas de prueba. Las pruebas del Paso 5 (`rellenar_parcial`, `dibujar_marco`, `dibujar_diagonales`) y `limpiar_pantalla` se eliminan de `main.c`; quedan en la guía del Paso 5.
 - `src/panel.c` no cambia: «poner un píxel con 7 colores» es `encender_pixel`, que ya aceptaba cualquier valor de 3 bits.
+- El Paso 7 reescribe `main.c`: el que aparece en esta sección es la **versión del Paso 6**.
 
 ### Concepto de clase que se usa
 Arreglos constantes en FLASH (`const`, `.rodata`), operaciones de bits (desplazar y enmascarar) y capas de software: `panel.c` maneja el hardware y el framebuffer, y `graficos.c` solo dibuja sobre el framebuffer a través de `encender_pixel`.
@@ -4002,6 +4010,547 @@ Decisiones menores del agente principal o del `programador` que Daniela puede ob
    Porque `alto - 1U` es un entero sin signo y con `alto = 0` daría `0xFFFFFFFF`, y los bucles recorrerían valores enormes. Lo que no protege (coordenadas cercanas a 2³²) quedó fuera por decisión de simplicidad.
 5. ¿Por qué hay que llamar a `borrar_pantalla` antes de dibujar la siguiente pantalla?
    Porque el framebuffer conserva lo que se escribió antes y `dibujar_digito` es transparente (solo enciende píxeles, nunca apaga): sin borrar, lo anterior se quedaría debajo de lo nuevo.
+
+## Paso 7 — Mover un punto con los botones
+
+### Objetivo
+Mover un punto verde por el panel con los botones A a D, con un **temporizador de software** (basado en SysTick) que decide cuándo avanza el punto, sin bloquear el programa. E pausa mientras se mantiene presionada y F reinicia el punto. El punto no puede salir del tablero. Es la base del movimiento de la serpiente del paso 8.
+
+### Archivos creados o modificados
+- `inc/botones.h` y `src/botones.c` (nuevos): `configurar_botones` y `leer_botones`.
+- `inc/system_config.h` y `src/system_config.c` (modificados): el temporizador de software (`iniciar_temporizador_movimiento` y `temporizador_movimiento_vencio`) y el `SysTick_Handler` que lo actualiza.
+- `main.c` (reescrito): el punto, su dirección y el bucle que lee los botones. Las pantallas de prueba del Paso 6 quedan en su sección.
+- `src/graficos.c` y `src/panel.c` no cambian. `graficos.c` se sigue compilando aunque `main` ya no lo use (el Makefile compila `src/*.c`); ocupa unos 382 bytes y lo usará el puntaje del paso 10.
+
+### Concepto de clase que se usa
+SysTick con interrupción y un temporizador de software (struct con contador, periodo y bandera), como el ejemplo `8-Interrupts-SysTick` del profesor (solo el patrón, sin copiar código y sin CMSIS). También: entradas con pull-up, lectura de botones por sondeo (*polling*), `volatile` y una máscara con un bit por botón.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó con un simulador de PC y no cambió nada; el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** no hay datos nuevos del RM0390. Los pines de los botones vienen del Paso 3 (`docs/conexiones.md`) y el patrón del temporizador, del ejemplo 8 del profesor (solo se leyó para entender la idea).
+
+### Por qué el tiempo del juego se separa del refresco de la pantalla
+- La **interrupción de TIM3** (cada 1 ms) dibuja una fase del panel. No se puede detener: si se atrasa, la imagen parpadea.
+- El **temporizador de movimiento** (cada 200 ms) decide cuándo avanza el punto. Es lento a propósito: es la velocidad del juego.
+- Son dos relojes distintos con dos objetivos. Si `main` esperara 200 ms con `esperar_milisegundos`, los botones no se leerían durante esa espera y las pulsaciones cortas se perderían. Con el temporizador de software, `main` lee los botones sin parar y mueve el punto solo cuando la bandera avisa.
+
+### Por qué el tamaño del tablero está en constantes
+`PANEL_ANCHO` y `PANEL_ALTO` (Paso 5) son los únicos lugares donde está escrito 32 y 16. `mover_punto` usa `PANEL_ALTO − 1` y `PANEL_ANCHO − 1` para los bordes y `POSICION_INICIAL_X/Y` usa `PANEL_ANCHO / 2` y `PANEL_ALTO / 2`. En la etapa 2 (segundo panel) solo cambian esas dos constantes y el punto sigue funcionando.
+
+### Código explicado
+
+`inc/system_config.h`
+
+```c
+#ifndef SYSTEM_CONFIG_H
+#define SYSTEM_CONFIG_H
+
+#include "registros_f446.h"
+
+// Frecuencia del reloj del sistema (SYSCLK y HCLK) después de configurar_reloj: 84 MHz.
+#define FRECUENCIA_RELOJ_HZ 84000000U
+// Interrupciones de SysTick por segundo: 1000 = una interrupción por milisegundo (base de tiempo de 1 ms).
+#define INTERRUPCIONES_SYSTICK_POR_SEGUNDO 1000U
+
+// Configura el PLL a 84 MHz, la latencia de la FLASH y los divisores de los buses. Se llama antes que cualquier periférico.
+void configurar_reloj(void);
+// Enciende SysTick para que interrumpa cada 1 ms (base de tiempo).
+void iniciar_systick(void);
+// Espera la cantidad de milisegundos indicada. Mientras espera, la interrupción de SysTick sigue contando.
+void esperar_milisegundos(uint32_t milisegundos);
+// Deja el temporizador de movimiento contando desde 0 y con el periodo indicado, en milisegundos.
+void iniciar_temporizador_movimiento(uint32_t periodo_ms);
+// Devuelve 1 y baja la bandera si el temporizador de movimiento venció desde la última consulta; devuelve 0 si no.
+uint32_t temporizador_movimiento_vencio(void);
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 2: las dos declaraciones del temporizador. `iniciar_temporizador_movimiento(periodo_ms)` lo deja contando desde 0 y `temporizador_movimiento_vencio()` devuelve 1 (y baja la bandera) si venció desde la última consulta.
+
+`src/system_config.c`
+
+```c
+#include "system_config.h"
+
+// Estados de espera de la FLASH (LATENCY = 2). Con VDD de 2.7 a 3.6 V, 2 estados de espera son necesarios para 60 < HCLK ≤ 90 MHz. Fuente: RM0390, sección 3.4.1, tabla 5 «Number of wait states according to CPU clock (HCLK) frequency».
+#define FLASH_ESTADOS_DE_ESPERA 2U
+// Divisor M del PLL: 16 MHz de la HSI / 16 = 1 MHz, que es la entrada del VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_DIVISOR_ENTRADA_M 16U
+// Multiplicador N del PLL: 1 MHz × 336 = 336 MHz en el VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_MULTIPLICADOR_N 336U
+// Código del divisor P del PLL: 01 = dividir entre 4, 336 MHz / 4 = 84 MHz. Fuente: RM0390, sección 6.3.2 (00 = /2, 01 = /4, 10 = /6, 11 = /8).
+#define PLL_CODIGO_DIVISOR_SALIDA_P 1U
+// Código HPRE = 0xxx: el AHB no se divide, HCLK = SYSCLK = 84 MHz. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, HPRE).
+#define AHB_SIN_DIVISION 0U
+// Código PPRE1 = 100: el APB1 se divide entre 2, APB1 = 42 MHz (el máximo permitido es 45 MHz). Fuente: máximo de 45 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE1).
+#define APB1_DIVIDIR_ENTRE_2 4U
+// Código PPRE2 = 0xx: el APB2 no se divide, APB2 = 84 MHz (el máximo permitido es 90 MHz). Fuente: máximo de 90 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE2).
+#define APB2_SIN_DIVISION 0U
+// Código SW y SWS = 10: el PLL es la fuente del reloj del sistema. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, SW y SWS).
+#define RELOJ_SISTEMA_PLL 2U
+
+// Cuenta milisegundos desde el arranque. Es volatile porque la interrupción la cambia sin que main lo sepa.
+// Es static porque solo este archivo la usa.
+static volatile uint32_t contador_milisegundos = 0U;
+
+// Temporizador de software que SysTick_Handler actualiza cada milisegundo.
+typedef struct {
+    // Milisegundos desde el último vencimiento. SysTick_Handler lo suma cada 1 ms y lo pone en 0 al vencer.
+    uint32_t contador;
+    // Milisegundos entre un vencimiento y el siguiente. Si vale 0, el temporizador está detenido.
+    uint32_t periodo;
+    // Vale 1 cuando el temporizador venció y todavía no se consultó. main la lee y la baja a 0.
+    uint32_t bandera;
+} TemporizadorSoftware;
+
+// Temporizador de movimiento: una sola instancia, arranca detenido (periodo 0).
+// Es volatile porque SysTick_Handler la cambia sin que main lo sepa.
+static volatile TemporizadorSoftware temporizador_movimiento = { 0U, 0U, 0U };
+
+void configurar_reloj(void)
+{
+    // Se escribe solo el campo LATENCY: la máscara va entre paréntesis en su definición para que ~ afecte solo a esos bits, y no se sobrescribe FLASH->ACR completo.
+    // Primero la latencia de la FLASH, porque la FLASH es más lenta que 84 MHz y debe esperar más ciclos antes de subir la frecuencia.
+    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY_MASCARA) | (FLASH_ESTADOS_DE_ESPERA << FLASH_ACR_LATENCY_POSICION);
+    // El manual (RM0390, sección 3.4.1) recomienda releer LATENCY y esperar a que quede escrito antes de cambiar el reloj.
+    while (((FLASH->ACR & FLASH_ACR_LATENCY_MASCARA) >> FLASH_ACR_LATENCY_POSICION) != FLASH_ESTADOS_DE_ESPERA) { }
+
+    // PLLSRC queda en 0 (HSI de 16 MHz, valor tras el reset). PLLQ y PLLR no se tocan y conservan su valor de reset.
+    // El PLL está apagado, por eso se puede escribir PLLCFGR. Solo se escriben los campos PLLM, PLLN y PLLP, no el registro completo.
+    // Campo PLLM: divisor de entrada del PLL.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLM_MASCARA) | (PLL_DIVISOR_ENTRADA_M << RCC_PLLCFGR_PLLM_POSICION);
+    // Campo PLLN: multiplicador del VCO.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLN_MASCARA) | (PLL_MULTIPLICADOR_N << RCC_PLLCFGR_PLLN_POSICION);
+    // Campo PLLP: divisor de salida del PLL que da el reloj del sistema.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLP_MASCARA) | (PLL_CODIGO_DIVISOR_SALIDA_P << RCC_PLLCFGR_PLLP_POSICION);
+
+    // Divisores de los buses, antes de subir la frecuencia para que ningún bus pase de su máximo.
+    // Campo HPRE: divisor del AHB.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_HPRE_MASCARA) | (AHB_SIN_DIVISION << RCC_CFGR_HPRE_POSICION);
+    // Campo PPRE1: divisor del APB1 (42 MHz; TIM3 recibirá 84 MHz).
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE1_MASCARA) | (APB1_DIVIDIR_ENTRE_2 << RCC_CFGR_PPRE1_POSICION);
+    // Campo PPRE2: divisor del APB2.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE2_MASCARA) | (APB2_SIN_DIVISION << RCC_CFGR_PPRE2_POSICION);
+
+    // Se enciende el PLL con |= para no cambiar los demás bits de CR.
+    RCC->CR |= RCC_CR_PLLON;
+    // Se espera a que el PLL enganche: PLLRDY = 1 indica que el PLL está listo.
+    while ((RCC->CR & RCC_CR_PLLRDY) == 0U) { }
+
+    // Campo SW: se elige el PLL como fuente del reloj del sistema.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_MASCARA) | (RELOJ_SISTEMA_PLL << RCC_CFGR_SW_POSICION);
+    // Se espera a que el hardware confirme el cambio: SWS muestra la fuente que está usando de verdad.
+    while ((RCC->CFGR & RCC_CFGR_SWS_MASCARA) != (RELOJ_SISTEMA_PLL << RCC_CFGR_SWS_POSICION)) { }
+}
+
+void iniciar_systick(void)
+{
+    // Se apaga el contador mientras se configura: ENABLE = 0 detiene la cuenta.
+    SysTick->CTRL &= ~SYSTICK_CTRL_ENABLE;
+    // 84 000 000 / 1000 = 84 000 ciclos por milisegundo. El contador cuenta desde LOAD hasta 0, o sea LOAD + 1 ciclos, por eso se resta 1.
+    // LOAD = 83 999: cabe en los 24 bits (máximo 16 777 215).
+    SysTick->LOAD = (FRECUENCIA_RELOJ_HZ / INTERRUPCIONES_SYSTICK_POR_SEGUNDO) - 1U;
+    // Se pone el contador en 0 para que empiece desde LOAD en la primera cuenta.
+    SysTick->VAL = 0U;
+    // CLKSOURCE = 1: el contador usa el reloj del procesador (84 MHz), no AHB/8.
+    SysTick->CTRL |= SYSTICK_CTRL_CLKSOURCE;
+    // TICKINT = 1: al llegar a 0 se genera la interrupción. SysTick es una excepción del núcleo y no necesita habilitarse en el NVIC.
+    SysTick->CTRL |= SYSTICK_CTRL_TICKINT;
+    // ENABLE = 1: se enciende el contador al final, cuando ya está todo configurado.
+    SysTick->CTRL |= SYSTICK_CTRL_ENABLE;
+}
+
+// El nombre es el de la tabla de vectores de crt0.S (posición 0x3C). Al definirla aquí reemplaza al alias débil que apunta a Default_Handler.
+// Se ejecuta cada 1 ms.
+void SysTick_Handler(void)
+{
+    // Suma 1 milisegundo al contador.
+    contador_milisegundos++;
+    // Suma 1 milisegundo al contador del temporizador de movimiento.
+    temporizador_movimiento.contador++;
+    // Si el periodo es 0, el temporizador está detenido y no vence. Si no, se compara con >= y no con ==:
+    // así, aunque el contador haya pasado del periodo (por ejemplo, al cambiar el periodo), igual vence.
+    if (temporizador_movimiento.periodo != 0U && temporizador_movimiento.contador >= temporizador_movimiento.periodo) {
+        // Se reinicia el contador para contar otra vez desde 0 hasta el periodo.
+        temporizador_movimiento.contador = 0U;
+        // Se avisa a main que el temporizador venció: la bandera queda en 1 hasta que main la consulte.
+        temporizador_movimiento.bandera = 1U;
+    }
+}
+
+void esperar_milisegundos(uint32_t milisegundos)
+{
+    // Se guarda el instante en que empieza la espera.
+    uint32_t instante_inicial = contador_milisegundos;
+    // La resta funciona aunque el contador de 32 bits dé la vuelta. main espera aquí y la interrupción sigue contando.
+    while ((contador_milisegundos - instante_inicial) < milisegundos) { }
+}
+
+void iniciar_temporizador_movimiento(uint32_t periodo_ms)
+{
+    // Primero se pone el contador en 0 para que la cuenta empiece desde el principio.
+    temporizador_movimiento.contador = 0U;
+    // Se baja la bandera para que no quede un vencimiento viejo pendiente.
+    temporizador_movimiento.bandera = 0U;
+    // Se guarda el periodo nuevo. Va al final porque, al escribirlo, el temporizador empieza a poder vencer.
+    temporizador_movimiento.periodo = periodo_ms;
+}
+
+uint32_t temporizador_movimiento_vencio(void)
+{
+    // Si la bandera está en 1, el temporizador venció desde la última consulta.
+    if (temporizador_movimiento.bandera != 0U) {
+        // Se baja la bandera para consumir el aviso: la siguiente consulta devuelve 0 si no vuelve a vencer.
+        // La interrupción podría poner la bandera en 1 justo entre el if y esta línea, y ese vencimiento se perdería.
+        // Con un periodo de cientos de ms no importa: el siguiente vencimiento se detecta igual.
+        temporizador_movimiento.bandera = 0U;
+        // Devuelve 1: sí venció.
+        return 1U;
+    }
+    // La bandera está en 0: no venció desde la última consulta.
+    return 0U;
+}
+```
+
+Lo **nuevo** respecto al Paso 2:
+- **`TemporizadorSoftware`:** un struct con `contador` (ms desde el último vencimiento), `periodo` (ms entre vencimientos; 0 significa detenido) y `bandera` (1 si venció y nadie lo consultó). El struct y su única instancia, `temporizador_movimiento`, están dentro de `system_config.c`: nadie más los ve.
+- **`static volatile`:** `static` porque solo este archivo la usa; `volatile` porque `SysTick_Handler` la cambia sin que `main` lo sepa.
+- **`SysTick_Handler`:** además de `contador_milisegundos++`, suma 1 al `contador` del temporizador. Si `periodo` no es 0 y `contador >= periodo`, pone el contador en 0 y la bandera en 1. Usa `>=` y no `==` (el ejemplo del profesor usa `==`): si el contador alguna vez pasara del periodo, con `==` nunca vencería.
+- **`iniciar_temporizador_movimiento`:** pone el contador y la bandera en 0 y **al final** guarda el periodo, porque desde que el periodo es distinto de 0 el temporizador puede vencer.
+- **`temporizador_movimiento_vencio`:** si la bandera está en 1, la baja y devuelve 1; si no, devuelve 0. Hay una carrera inofensiva: si la interrupción pone la bandera justo antes de que `main` la baje, ese vencimiento se pierde; con un periodo de cientos de ms, el siguiente se detecta igual.
+
+`inc/botones.h`
+
+```c
+#ifndef BOTONES_H
+#define BOTONES_H
+
+#include "gpio_config.h"
+
+// Bit del botón A en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_A (1U << 0)
+// Bit del botón B en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_B (1U << 1)
+// Bit del botón C en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_C (1U << 2)
+// Bit del botón D en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_D (1U << 3)
+// Bit del botón E en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_E (1U << 4)
+// Bit del botón F en el valor que devuelve leer_botones (1 = presionado).
+#define BOTON_F (1U << 5)
+
+// Configura los seis botones del shield como entradas con pull-up interno.
+void configurar_botones(void);
+// Devuelve un valor con un bit por cada botón presionado (BOTON_A a BOTON_F). Un bit en 1 = botón presionado.
+uint32_t leer_botones(void);
+
+#endif
+```
+
+`BOTON_A` a `BOTON_F` son los bits 0 a 5. `leer_botones` devuelve un número con un bit en 1 por cada botón presionado.
+
+`src/botones.c`
+
+```c
+#include "botones.h"
+
+// Número del pin del botón A del shield: PA10, activo en bajo (presionado = 0).
+#define PIN_BOTON_A 10U
+// Número del pin del botón B del shield: PB3, activo en bajo (presionado = 0).
+#define PIN_BOTON_B 3U
+// Número del pin del botón C del shield: PB5, activo en bajo (presionado = 0).
+#define PIN_BOTON_C 5U
+// Número del pin del botón D del shield: PB4, activo en bajo (presionado = 0).
+#define PIN_BOTON_D 4U
+// Número del pin del botón E del shield: PB10, activo en bajo (presionado = 0).
+#define PIN_BOTON_E 10U
+// Número del pin del botón F del shield: PA8, activo en bajo (presionado = 0).
+#define PIN_BOTON_F 8U
+
+// Configura un pin como entrada con pull-up interno. El pin queda en 1 mientras el botón no está presionado.
+static void configurar_entrada_con_pull_up(RegistrosGPIO *puerto, uint32_t pin)
+{
+    // Datos de configuración del pin, que se escriben de una sola vez con configurar_pin.
+    ConfiguracionPin configuracion;
+    // El botón es una entrada.
+    configuracion.modo = MODO_ENTRADA;
+    // Número del pin dentro del puerto.
+    configuracion.pin = pin;
+    // Pull-up interno: el pin queda en 1 mientras el botón no está presionado.
+    configuracion.resistencia = RESISTENCIA_PULL_UP;
+    // Velocidad baja.
+    configuracion.velocidad = VELOCIDAD_BAJA;
+    // AF0: no se usa, el pin no es de función alterna.
+    configuracion.funcion_alterna = 0U;
+    // Se escribe la configuración en el puerto indicado.
+    configurar_pin(puerto, configuracion);
+}
+
+void configurar_botones(void)
+{
+    // Botón A (PA10) en el puerto A.
+    configurar_entrada_con_pull_up(GPIOA, PIN_BOTON_A);
+    // Botón B (PB3) en el puerto B. PB3 arranca en función alterna de depuración; por eso se configura explícitamente como entrada.
+    configurar_entrada_con_pull_up(GPIOB, PIN_BOTON_B);
+    // Botón C (PB5) en el puerto B.
+    configurar_entrada_con_pull_up(GPIOB, PIN_BOTON_C);
+    // Botón D (PB4) en el puerto B. PB4 arranca en función alterna de depuración; por eso se configura explícitamente como entrada.
+    configurar_entrada_con_pull_up(GPIOB, PIN_BOTON_D);
+    // Botón E (PB10) en el puerto B.
+    configurar_entrada_con_pull_up(GPIOB, PIN_BOTON_E);
+    // Botón F (PA8) en el puerto A.
+    configurar_entrada_con_pull_up(GPIOA, PIN_BOTON_F);
+}
+
+uint32_t leer_botones(void)
+{
+    // Valor que se va armando: cada botón presionado pone su bit en 1.
+    uint32_t botones = 0U;
+    // Los botones son activos en bajo: leer_pin devuelve 0 cuando el botón está presionado.
+    if (leer_pin(GPIOA, PIN_BOTON_A) == 0U) {
+        // Se pone en 1 el bit del botón A (|= no cambia los demás bits).
+        botones |= BOTON_A;
+    }
+    // Botón B (PB3): presionado = 0.
+    if (leer_pin(GPIOB, PIN_BOTON_B) == 0U) {
+        // Se pone en 1 el bit del botón B.
+        botones |= BOTON_B;
+    }
+    // Botón C (PB5): presionado = 0.
+    if (leer_pin(GPIOB, PIN_BOTON_C) == 0U) {
+        // Se pone en 1 el bit del botón C.
+        botones |= BOTON_C;
+    }
+    // Botón D (PB4): presionado = 0.
+    if (leer_pin(GPIOB, PIN_BOTON_D) == 0U) {
+        // Se pone en 1 el bit del botón D.
+        botones |= BOTON_D;
+    }
+    // Botón E (PB10): presionado = 0.
+    if (leer_pin(GPIOB, PIN_BOTON_E) == 0U) {
+        // Se pone en 1 el bit del botón E.
+        botones |= BOTON_E;
+    }
+    // Botón F (PA8): presionado = 0.
+    if (leer_pin(GPIOA, PIN_BOTON_F) == 0U) {
+        // Se pone en 1 el bit del botón F.
+        botones |= BOTON_F;
+    }
+    // Se devuelve el valor con un bit por cada botón presionado.
+    return botones;
+}
+```
+
+- `PIN_BOTON_*`: los pines del Paso 3 (A = PA10, B = PB3, C = PB5, D = PB4, E = PB10, F = PA8).
+- `configurar_entrada_con_pull_up(puerto, pin)` arma una `ConfiguracionPin` (entrada, pull-up, velocidad baja, AF0) y llama a `configurar_pin`; reemplaza a los seis bloques de 8 líneas del Paso 3. `configurar_botones` la llama una vez por botón (A y F en `GPIOA`; B, C, D y E en `GPIOB`). PB3 y PB4 arrancan en función alterna de depuración y por eso se configuran explícitamente como entrada.
+- `leer_botones`: para cada botón, `if (leer_pin(...) == 0U) botones |= BOTON_X`, porque son activos en bajo (0 = presionado).
+
+`main.c`
+
+```c
+#include "system_config.h"
+#include "panel.h"
+#include "botones.h"
+
+// Tiempo entre un paso del punto y el siguiente, en milisegundos. El punto avanza un píxel cada 200 ms.
+#define PERIODO_MOVIMIENTO_MS 200U
+// Columna x donde nace el punto: el centro del panel.
+#define POSICION_INICIAL_X (PANEL_ANCHO / 2U)
+// Fila y donde nace el punto: el centro del panel.
+#define POSICION_INICIAL_Y (PANEL_ALTO / 2U)
+// Dirección sin movimiento: el punto está quieto hasta que se presiona A, B, C o D.
+#define DIRECCION_QUIETO 0U
+// Dirección arriba: y disminuye (el botón A).
+#define DIRECCION_ARRIBA 1U
+// Dirección derecha: x aumenta (el botón B).
+#define DIRECCION_DERECHA 2U
+// Dirección abajo: y aumenta (el botón C).
+#define DIRECCION_ABAJO 3U
+// Dirección izquierda: x disminuye (el botón D).
+#define DIRECCION_IZQUIERDA 4U
+
+// Columna actual del punto verde.
+static uint32_t punto_x;
+// Fila actual del punto verde.
+static uint32_t punto_y;
+// Dirección en la que avanza el punto: uno de los DIRECCION_*.
+static uint32_t direccion;
+
+// Apaga el punto en su posición actual, lo pone en el centro, lo deja quieto y lo enciende en verde.
+static void reiniciar_punto(void)
+{
+    // Se apaga el píxel de la posición actual para que no quede un punto viejo en el panel.
+    encender_pixel(punto_x, punto_y, COLOR_NEGRO);
+    // El punto vuelve a la posición inicial (el centro).
+    punto_x = POSICION_INICIAL_X;
+    punto_y = POSICION_INICIAL_Y;
+    // El punto queda quieto hasta que se presione una dirección.
+    direccion = DIRECCION_QUIETO;
+    // Se enciende el punto en su posición inicial, en verde.
+    encender_pixel(punto_x, punto_y, COLOR_VERDE);
+}
+
+// Cambia la dirección según los botones presionados. Si hay dos presionados, gana el último en este orden,
+// porque el programa no sabe cuál se presionó primero.
+static void actualizar_direccion(uint32_t botones)
+{
+    // Si el botón A está presionado, la dirección es arriba.
+    if ((botones & BOTON_A) != 0U) {
+        direccion = DIRECCION_ARRIBA;
+    }
+    // Si el botón B está presionado, la dirección es derecha.
+    if ((botones & BOTON_B) != 0U) {
+        direccion = DIRECCION_DERECHA;
+    }
+    // Si el botón C está presionado, la dirección es abajo.
+    if ((botones & BOTON_C) != 0U) {
+        direccion = DIRECCION_ABAJO;
+    }
+    // Si el botón D está presionado, la dirección es izquierda.
+    if ((botones & BOTON_D) != 0U) {
+        direccion = DIRECCION_IZQUIERDA;
+    }
+}
+
+// Avanza el punto un píxel en la dirección actual. En el borde se detiene y conserva la dirección.
+static void mover_punto(void)
+{
+    // La posición nueva empieza igual a la actual; solo cambia si la dirección lo permite.
+    uint32_t nueva_x = punto_x;
+    uint32_t nueva_y = punto_y;
+    // Arriba: se resta 1 a y solo si no está en la primera fila (0).
+    if (direccion == DIRECCION_ARRIBA && punto_y > 0U) {
+        nueva_y = punto_y - 1U;
+    }
+    // Abajo: se suma 1 a y solo si no está en la última fila.
+    if (direccion == DIRECCION_ABAJO && punto_y < PANEL_ALTO - 1U) {
+        nueva_y = punto_y + 1U;
+    }
+    // Izquierda: se resta 1 a x solo si no está en la primera columna (0).
+    if (direccion == DIRECCION_IZQUIERDA && punto_x > 0U) {
+        nueva_x = punto_x - 1U;
+    }
+    // Derecha: se suma 1 a x solo si no está en la última columna.
+    if (direccion == DIRECCION_DERECHA && punto_x < PANEL_ANCHO - 1U) {
+        nueva_x = punto_x + 1U;
+    }
+    // Si la posición cambió, se mueve el punto. Si no cambió (borde o quieto), no se hace nada.
+    if (nueva_x != punto_x || nueva_y != punto_y) {
+        // Primero se enciende el píxel nuevo en verde.
+        encender_pixel(nueva_x, nueva_y, COLOR_VERDE);
+        // Después se apaga el píxel viejo, para no dejar dos puntos en el panel.
+        encender_pixel(punto_x, punto_y, COLOR_NEGRO);
+        // Se guarda la posición nueva como la actual.
+        punto_x = nueva_x;
+        punto_y = nueva_y;
+    }
+}
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick), que usa el temporizador de movimiento.
+    iniciar_systick();
+
+    // Se configuran los pines del panel como salidas.
+    configurar_panel();
+    // Se enciende TIM3: desde aquí, una interrupción cada 1 ms dibuja una fase del framebuffer en el panel.
+    iniciar_refresco_panel();
+
+    // Se configuran los seis botones como entradas con pull-up.
+    configurar_botones();
+    // El temporizador de movimiento cuenta desde 0 con un periodo de 200 ms.
+    iniciar_temporizador_movimiento(PERIODO_MOVIMIENTO_MS);
+    // El punto aparece en el centro, quieto y en verde.
+    reiniciar_punto();
+
+    while (1) {
+        // Los botones se leen en cada vuelta del bucle, no solo cuando vence el temporizador, para no perder pulsaciones cortas.
+        uint32_t botones = leer_botones();
+        // F reinicia el punto (mientras se mantiene presionada); si no, los botones A a D cambian la dirección.
+        if ((botones & BOTON_F) != 0U) {
+            reiniciar_punto();
+        } else {
+            actualizar_direccion(botones);
+        }
+
+        // La bandera del temporizador se consume siempre, aunque haya pausa, para que no quede un vencimiento viejo pendiente.
+        if (temporizador_movimiento_vencio() == 1U) {
+            // E pausa el movimiento solo mientras se mantiene presionada: si no está presionada, el punto avanza.
+            if ((botones & BOTON_E) == 0U) {
+                mover_punto();
+            }
+        }
+    }
+}
+```
+
+- **Constantes:** `PERIODO_MOVIMIENTO_MS` = 200, `POSICION_INICIAL_X/Y` = el centro del tablero (16, 8) y las cinco direcciones (`DIRECCION_QUIETO` = 0, `DIRECCION_ARRIBA` = 1, `DIRECCION_DERECHA` = 2, `DIRECCION_ABAJO` = 3, `DIRECCION_IZQUIERDA` = 4).
+- **Variables:** `punto_x`, `punto_y` y `direccion` son `static` (solo las ve este archivo) y no `volatile` (solo las usa `main`). Valen 0 al arrancar por estar en `.bss`.
+- **`reiniciar_punto`:** apaga el píxel de la posición actual, pone el punto en el centro con `DIRECCION_QUIETO` y lo enciende en verde. En el arranque apaga el `(0, 0)`, que ya está negro.
+- **`actualizar_direccion(botones)`:** cuatro `if` independientes en orden A, B, C, D. Si hay dos presionados, gana el último (D > C > B > A): no se puede saber cuál se presionó primero.
+- **`mover_punto`:** parte de la posición actual y solo la cambia si el borde lo permite (arriba resta 1 a `y` si `y > 0`; abajo suma 1 si `y < 15`; izquierda resta 1 a `x` si `x > 0`; derecha suma 1 si `x < 31`). Si la posición cambió, **primero enciende el píxel nuevo y después apaga el viejo**, para no dejar el punto sin dibujar entre las dos escrituras. En el borde no cambia nada y conserva la dirección.
+- **El bucle de `main`:**
+  1. Lee los botones en **cada vuelta**, no solo cuando vence el temporizador.
+  2. Si F está presionada, reinicia el punto; si no, actualiza la dirección.
+  3. Consulta siempre el temporizador (consume la bandera aunque haya pausa); si venció y E **no** está presionada, mueve el punto.
+- **Orden de arranque:** reloj, SysTick, panel, refresco, botones, temporizador y punto.
+
+### Rebote en este paso
+El rebote (Paso 3) no afecta aquí, por la forma de usar los botones:
+- A a D fijan la dirección con el **nivel** actual (presionado o no) en cada vuelta del bucle. Un rebote de unos milisegundos solo repite la misma dirección.
+- E se usa por **nivel**: pausa mientras está presionada. Si fuera un botón que alterna pausa y marcha con cada pulsación, el rebote sí podría contarse como varias pulsaciones y haría falta un antirrebote.
+- F reinicia por nivel; repetir el reinicio no cambia nada.
+
+### Tiempo de la interrupción de SysTick (estimaciones del `revisor`, sin medir)
+- El `SysTick_Handler` tiene unas 34 instrucciones con `-O0`, es decir, 1 a 2 µs.
+- SysTick y TIM3 tienen la misma prioridad. Si SysTick vence durante la interrupción de TIM3 (de 210 a 630 µs según el Paso 5), queda pendiente y corre al terminar; como eso es menos de 1 ms, no se pierden ticks, solo hay un retraso de hasta ~0,6 ms.
+- `main` conserva al menos un 35 % del tiempo del procesador en el peor caso (estimado, no medido).
+
+### Modificaciones y correcciones
+- `main.c` pasa de las dos pantallas de prueba al punto móvil.
+- El código de los botones sale de `main.c` (donde estaba en el Paso 3) a `botones.h` y `botones.c`, y la configuración usa una función de apoyo en vez de seis bloques.
+- Sin correcciones del `revisor`.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Dirección de cada botón | A arriba, B derecha, C abajo, D izquierda, u otra | A = arriba, B = derecha, C = abajo, D = izquierda |
+| Velocidad del punto | 200, 300 o 500 ms | 200 ms |
+| Temporizador | Estilo del profesor (struct con bandera) o comparación con el contador de ms | Estilo del profesor |
+| Borde | Se detiene o da la vuelta | Se detiene |
+| E y F | E pausa mientras se mantiene presionada o alterna con antirrebote; F reinicia | E pausa mientras se mantiene presionada; F reinicia |
+| Código de botones | `botones.h/.c` o `main.c` | `botones.h` y `botones.c` |
+| Prioridad entre direcciones simultáneas | Gana el último en el orden A, B, C, D (D > C > B > A) | Aceptada |
+| `esperar_milisegundos` sin uso en `main` | Dejarla o quitarla | Dejarla |
+| `graficos.c` sin uso en `main` | Dejarlo o quitarlo | Dejarlo |
+
+Decisiones menores del agente principal o del `programador` que Daniela puede objetar: la función de apoyo en `botones.c`, `>=` en lugar de `==`, que `main` lee los botones en cada vuelta, que el punto es verde y nace en el centro, y que `punto_x`, `punto_y` y `direccion` quedan sin inicializador explícito.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 3362`, `data 0`, `bss 544`.
+- El `revisor` comprobó en el desensamblado que cada botón lee el puerto y el pin correctos y que las máscaras son los bits 0 a 5. Con un simulador de PC de las funciones de `main.c` (framebuffer de 16×32): A, B, C y D llegan a cada borde sin salir; las esquinas se recorren bien; cambiar de dirección en el borde funciona; F deja el punto en `(16, 8)` y quieto; E consume la bandera sin mover; con dos botones gana el último del orden; y en 200 000 ciclos con botones aleatorios siempre hubo exactamente un píxel verde dentro del tablero. También que el vector 15 (`0x3C`) vale `0x08000be1`, es decir `SysTick_Handler` (`0x08000be0`) con el bit Thumb.
+- `make flash`: voltaje 3,256 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa (2026-11-09): Daniela comprobó que **el punto se mueve bien** con los botones (no se detalló prueba por prueba).
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación ni en la prueba.
+- Observación del `revisor`: mientras F esté presionada, `reiniciar_punto` se ejecuta en cada vuelta del bucle y repite el mismo dibujo; no hay efecto de memoria y el posible parpadeo es imperceptible.
+
+### Preguntas de autoevaluación
+1. ¿Por qué el tiempo del juego se separa del refresco de la pantalla?
+   El refresco (TIM3, cada 1 ms) tiene que ser constante y rápido para que la imagen no parpadee, y el movimiento del juego (200 ms) es lento. Con dos relojes, `main` puede leer los botones sin parar mientras el panel se sigue refrescando.
+2. ¿Por qué el `SysTick_Handler` compara con `>=` y qué significa `periodo = 0`?
+   Con `>=` el temporizador vence aunque el contador haya pasado del periodo; con `==` podría no vencer nunca. Con `periodo = 0` el temporizador está detenido y no dispara.
+3. ¿Por qué `main` lee los botones en cada vuelta del bucle y no solo cuando vence el temporizador?
+   Porque una pulsación corta (menos de 200 ms) podría empezar y terminar entre dos vencimientos y se perdería. Leyendo en cada vuelta se ve siempre, y el último botón visto fija la dirección.
+4. ¿Por qué `mover_punto` enciende el píxel nuevo antes de apagar el viejo y qué hace en el borde?
+   Para que el punto no desaparezca del framebuffer en el instante entre las dos escrituras, mientras la interrupción de TIM3 lo está leyendo. En el borde la posición nueva es igual a la actual, así que no hace nada y la dirección se conserva.
+5. ¿Por qué el rebote no afecta a los botones de este paso pero sí afectaría a una pausa que alterna?
+   Porque A a D, E y F se leen por nivel: un rebote de unos milisegundos solo repite el mismo estado. Una pausa que alterna con cada pulsación cuenta flancos, y el rebote podría contar varias pulsaciones, por lo que haría falta un antirrebote.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
