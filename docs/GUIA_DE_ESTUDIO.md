@@ -14,6 +14,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 5 — Framebuffer y refresco del panel con TIM3](#paso-5--framebuffer-y-refresco-del-panel-con-tim3)
 - [Paso 6 — Biblioteca gráfica mínima](#paso-6--biblioteca-gráfica-mínima)
 - [Paso 7 — Mover un punto con los botones](#paso-7--mover-un-punto-con-los-botones)
+- [Paso 8 — Snake básico (primer avance para el profesor)](#paso-8--snake-básico-primer-avance-para-el-profesor)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -107,6 +108,11 @@ Cada término se define la primera vez que aparece, en una frase.
 | Sondeo (polling) | Leer el estado de una entrada una y otra vez en el bucle principal, en vez de esperar una interrupción. |
 | Máscara de botones | Número con un bit por botón (`BOTON_A` a `BOTON_F`) que `leer_botones` devuelve con un 1 en cada botón presionado. |
 | Antirrebote (debounce) | Técnica que ignora los cambios del botón durante unos milisegundos para contar una sola pulsación; no hizo falta en este paso. |
+| Arreglo circular | Arreglo cuyo índice vuelve a 0 al llegar al final (con `%`): los datos no se mueven, solo avanzan los índices de cabeza y cola. |
+| Cabeza y cola | Segmento más nuevo y más viejo de la serpiente; la cabeza avanza siempre y la cola avanza salvo cuando se come. |
+| Módulo (`%`) | Resto de una división; `(i + 1) % 512` da la vuelta al llegar a 512. |
+| Semilla | Valor de partida del que se calcula un número «al azar»; aquí, los milisegundos desde el arranque. |
+| Juego congelado | Estado en que la partida terminó y `avanzar_serpiente` no hace nada hasta que F reinicia. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -4021,6 +4027,7 @@ Mover un punto verde por el panel con los botones A a D, con un **temporizador d
 - `inc/system_config.h` y `src/system_config.c` (modificados): el temporizador de software (`iniciar_temporizador_movimiento` y `temporizador_movimiento_vencio`) y el `SysTick_Handler` que lo actualiza.
 - `main.c` (reescrito): el punto, su dirección y el bucle que lee los botones. Las pantallas de prueba del Paso 6 quedan en su sección.
 - `src/graficos.c` y `src/panel.c` no cambian. `graficos.c` se sigue compilando aunque `main` ya no lo use (el Makefile compila `src/*.c`); ocupa unos 382 bytes y lo usará el puntaje del paso 10.
+- El Paso 8 reescribe `main.c` y agrega `obtener_milisegundos` a `system_config.*`: los que aparecen en esta sección son las **versiones del Paso 7**.
 
 ### Concepto de clase que se usa
 SysTick con interrupción y un temporizador de software (struct con contador, periodo y bandera), como el ejemplo `8-Interrupts-SysTick` del profesor (solo el patrón, sin copiar código y sin CMSIS). También: entradas con pull-up, lectura de botones por sondeo (*polling*), `volatile` y una máscara con un bit por botón.
@@ -4551,6 +4558,647 @@ Decisiones menores del agente principal o del `programador` que Daniela puede ob
    Para que el punto no desaparezca del framebuffer en el instante entre las dos escrituras, mientras la interrupción de TIM3 lo está leyendo. En el borde la posición nueva es igual a la actual, así que no hace nada y la dirección se conserva.
 5. ¿Por qué el rebote no afecta a los botones de este paso pero sí afectaría a una pausa que alterna?
    Porque A a D, E y F se leen por nivel: un rebote de unos milisegundos solo repite el mismo estado. Una pausa que alterna con cada pulsación cuenta flancos, y el rebote podría contar varias pulsaciones, por lo que haría falta un antirrebote.
+
+## Paso 8 — Snake básico (primer avance para el profesor)
+
+### Objetivo
+Convertir el punto móvil en el primer Snake jugable: una serpiente verde de 3 píxeles que se mueve con los botones, crece al comer una manzana roja y muere al chocar con una pared o consigo misma. El cuerpo se guarda en un **arreglo circular** con tantas posiciones como píxeles tiene el tablero (512 ahora, 1024 con dos paneles), con un índice de cabeza y uno de cola, así que no hay límite de longitud. El puntaje se cuenta en una variable (se muestra en el paso 10).
+
+### Archivos creados o modificados
+- `inc/snake.h` y `src/snake.c` (nuevos): el estado y las reglas del juego.
+- `inc/system_config.h` y `src/system_config.c` (modificados): `obtener_milisegundos`.
+- `main.c` (modificado): el bucle ahora llama al juego en vez de mover un punto.
+- `src/botones.c`, `src/panel.c` y `src/graficos.c` no cambian. `graficos.c` ya se usa: `borrar_pantalla`.
+
+### Concepto de clase que se usa
+Arreglos y structs, índices con módulo (arreglo circular), `static` para datos privados de un módulo, reutilización de la base de tiempo (SysTick y temporizador de software) y de los botones. Es el paso con más lógica de programa y menos registros.
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó con un simulador de PC y no cambió nada; el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** no hay datos del RM0390 en este paso. Las reglas del juego salen de `CLAUDE.md` y `PLAN.md`, y las decisiones son de Daniela.
+
+### El arreglo circular
+`cuerpo[512]` guarda las posiciones de los segmentos. Tres variables lo manejan:
+- `cabeza`: índice del segmento más nuevo (donde está la cabeza).
+- `cola`: índice del segmento más viejo (el primero que se apaga al moverse).
+- `longitud`: cantidad de segmentos. Los segmentos ocupan los índices desde `cola` hasta `cabeza`.
+
+Al avanzar, **no se mueven los datos**: solo se mueven los índices.
+1. La cabeza nueva se escribe en `(cabeza + 1) % 512`.
+2. Si no comió, la cola también avanza: `(cola + 1) % 512`, y su píxel se apaga.
+3. Si comió, la cola no avanza y la `longitud` sube 1.
+
+El `% 512` hace que, al llegar al final del arreglo, el índice vuelva a 0. Ejemplo: al arrancar, `cola = 0` y `cabeza = 2`. Después de 510 pasos sin comer, `cola = 510` y `cabeza = (2 + 510) % 512 = 0`: la serpiente ocupa los índices 510, 511 y 0. Por eso no hay límite de longitud: el arreglo nunca se desplaza ni se copia, y la serpiente crece mientras haya celdas libres.
+
+### Código explicado
+
+`inc/system_config.h`
+
+```c
+#ifndef SYSTEM_CONFIG_H
+#define SYSTEM_CONFIG_H
+
+#include "registros_f446.h"
+
+// Frecuencia del reloj del sistema (SYSCLK y HCLK) después de configurar_reloj: 84 MHz.
+#define FRECUENCIA_RELOJ_HZ 84000000U
+// Interrupciones de SysTick por segundo: 1000 = una interrupción por milisegundo (base de tiempo de 1 ms).
+#define INTERRUPCIONES_SYSTICK_POR_SEGUNDO 1000U
+
+// Configura el PLL a 84 MHz, la latencia de la FLASH y los divisores de los buses. Se llama antes que cualquier periférico.
+void configurar_reloj(void);
+// Enciende SysTick para que interrumpa cada 1 ms (base de tiempo).
+void iniciar_systick(void);
+// Espera la cantidad de milisegundos indicada. Mientras espera, la interrupción de SysTick sigue contando.
+void esperar_milisegundos(uint32_t milisegundos);
+// Devuelve los milisegundos desde el arranque. Sirve como semilla para la posición de la manzana.
+uint32_t obtener_milisegundos(void);
+// Deja el temporizador de movimiento contando desde 0 y con el periodo indicado, en milisegundos.
+void iniciar_temporizador_movimiento(uint32_t periodo_ms);
+// Devuelve 1 y baja la bandera si el temporizador de movimiento venció desde la última consulta; devuelve 0 si no.
+uint32_t temporizador_movimiento_vencio(void);
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 7: `obtener_milisegundos()`, que devuelve el contador de milisegundos de SysTick.
+
+`src/system_config.c`
+
+```c
+#include "system_config.h"
+
+// Estados de espera de la FLASH (LATENCY = 2). Con VDD de 2.7 a 3.6 V, 2 estados de espera son necesarios para 60 < HCLK ≤ 90 MHz. Fuente: RM0390, sección 3.4.1, tabla 5 «Number of wait states according to CPU clock (HCLK) frequency».
+#define FLASH_ESTADOS_DE_ESPERA 2U
+// Divisor M del PLL: 16 MHz de la HSI / 16 = 1 MHz, que es la entrada del VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_DIVISOR_ENTRADA_M 16U
+// Multiplicador N del PLL: 1 MHz × 336 = 336 MHz en el VCO. Fuente: RM0390, sección 6.3.2 (RCC_PLLCFGR).
+#define PLL_MULTIPLICADOR_N 336U
+// Código del divisor P del PLL: 01 = dividir entre 4, 336 MHz / 4 = 84 MHz. Fuente: RM0390, sección 6.3.2 (00 = /2, 01 = /4, 10 = /6, 11 = /8).
+#define PLL_CODIGO_DIVISOR_SALIDA_P 1U
+// Código HPRE = 0xxx: el AHB no se divide, HCLK = SYSCLK = 84 MHz. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, HPRE).
+#define AHB_SIN_DIVISION 0U
+// Código PPRE1 = 100: el APB1 se divide entre 2, APB1 = 42 MHz (el máximo permitido es 45 MHz). Fuente: máximo de 45 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE1).
+#define APB1_DIVIDIR_ENTRE_2 4U
+// Código PPRE2 = 0xx: el APB2 no se divide, APB2 = 84 MHz (el máximo permitido es 90 MHz). Fuente: máximo de 90 MHz en RM0390, sección 6.2 «Clocks»; código del campo en la sección 6.3.3 (RCC_CFGR, PPRE2).
+#define APB2_SIN_DIVISION 0U
+// Código SW y SWS = 10: el PLL es la fuente del reloj del sistema. Fuente: RM0390, sección 6.3.3 (RCC_CFGR, SW y SWS).
+#define RELOJ_SISTEMA_PLL 2U
+
+// Cuenta milisegundos desde el arranque. Es volatile porque la interrupción la cambia sin que main lo sepa.
+// Es static porque solo este archivo la usa.
+static volatile uint32_t contador_milisegundos = 0U;
+
+// Temporizador de software que SysTick_Handler actualiza cada milisegundo.
+typedef struct {
+    // Milisegundos desde el último vencimiento. SysTick_Handler lo suma cada 1 ms y lo pone en 0 al vencer.
+    uint32_t contador;
+    // Milisegundos entre un vencimiento y el siguiente. Si vale 0, el temporizador está detenido.
+    uint32_t periodo;
+    // Vale 1 cuando el temporizador venció y todavía no se consultó. main la lee y la baja a 0.
+    uint32_t bandera;
+} TemporizadorSoftware;
+
+// Temporizador de movimiento: una sola instancia, arranca detenido (periodo 0).
+// Es volatile porque SysTick_Handler la cambia sin que main lo sepa.
+static volatile TemporizadorSoftware temporizador_movimiento = { 0U, 0U, 0U };
+
+void configurar_reloj(void)
+{
+    // Se escribe solo el campo LATENCY: la máscara va entre paréntesis en su definición para que ~ afecte solo a esos bits, y no se sobrescribe FLASH->ACR completo.
+    // Primero la latencia de la FLASH, porque la FLASH es más lenta que 84 MHz y debe esperar más ciclos antes de subir la frecuencia.
+    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY_MASCARA) | (FLASH_ESTADOS_DE_ESPERA << FLASH_ACR_LATENCY_POSICION);
+    // El manual (RM0390, sección 3.4.1) recomienda releer LATENCY y esperar a que quede escrito antes de cambiar el reloj.
+    while (((FLASH->ACR & FLASH_ACR_LATENCY_MASCARA) >> FLASH_ACR_LATENCY_POSICION) != FLASH_ESTADOS_DE_ESPERA) { }
+
+    // PLLSRC queda en 0 (HSI de 16 MHz, valor tras el reset). PLLQ y PLLR no se tocan y conservan su valor de reset.
+    // El PLL está apagado, por eso se puede escribir PLLCFGR. Solo se escriben los campos PLLM, PLLN y PLLP, no el registro completo.
+    // Campo PLLM: divisor de entrada del PLL.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLM_MASCARA) | (PLL_DIVISOR_ENTRADA_M << RCC_PLLCFGR_PLLM_POSICION);
+    // Campo PLLN: multiplicador del VCO.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLN_MASCARA) | (PLL_MULTIPLICADOR_N << RCC_PLLCFGR_PLLN_POSICION);
+    // Campo PLLP: divisor de salida del PLL que da el reloj del sistema.
+    RCC->PLLCFGR = (RCC->PLLCFGR & ~RCC_PLLCFGR_PLLP_MASCARA) | (PLL_CODIGO_DIVISOR_SALIDA_P << RCC_PLLCFGR_PLLP_POSICION);
+
+    // Divisores de los buses, antes de subir la frecuencia para que ningún bus pase de su máximo.
+    // Campo HPRE: divisor del AHB.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_HPRE_MASCARA) | (AHB_SIN_DIVISION << RCC_CFGR_HPRE_POSICION);
+    // Campo PPRE1: divisor del APB1 (42 MHz; TIM3 recibirá 84 MHz).
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE1_MASCARA) | (APB1_DIVIDIR_ENTRE_2 << RCC_CFGR_PPRE1_POSICION);
+    // Campo PPRE2: divisor del APB2.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_PPRE2_MASCARA) | (APB2_SIN_DIVISION << RCC_CFGR_PPRE2_POSICION);
+
+    // Se enciende el PLL con |= para no cambiar los demás bits de CR.
+    RCC->CR |= RCC_CR_PLLON;
+    // Se espera a que el PLL enganche: PLLRDY = 1 indica que el PLL está listo.
+    while ((RCC->CR & RCC_CR_PLLRDY) == 0U) { }
+
+    // Campo SW: se elige el PLL como fuente del reloj del sistema.
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW_MASCARA) | (RELOJ_SISTEMA_PLL << RCC_CFGR_SW_POSICION);
+    // Se espera a que el hardware confirme el cambio: SWS muestra la fuente que está usando de verdad.
+    while ((RCC->CFGR & RCC_CFGR_SWS_MASCARA) != (RELOJ_SISTEMA_PLL << RCC_CFGR_SWS_POSICION)) { }
+}
+
+void iniciar_systick(void)
+{
+    // Se apaga el contador mientras se configura: ENABLE = 0 detiene la cuenta.
+    SysTick->CTRL &= ~SYSTICK_CTRL_ENABLE;
+    // 84 000 000 / 1000 = 84 000 ciclos por milisegundo. El contador cuenta desde LOAD hasta 0, o sea LOAD + 1 ciclos, por eso se resta 1.
+    // LOAD = 83 999: cabe en los 24 bits (máximo 16 777 215).
+    SysTick->LOAD = (FRECUENCIA_RELOJ_HZ / INTERRUPCIONES_SYSTICK_POR_SEGUNDO) - 1U;
+    // Se pone el contador en 0 para que empiece desde LOAD en la primera cuenta.
+    SysTick->VAL = 0U;
+    // CLKSOURCE = 1: el contador usa el reloj del procesador (84 MHz), no AHB/8.
+    SysTick->CTRL |= SYSTICK_CTRL_CLKSOURCE;
+    // TICKINT = 1: al llegar a 0 se genera la interrupción. SysTick es una excepción del núcleo y no necesita habilitarse en el NVIC.
+    SysTick->CTRL |= SYSTICK_CTRL_TICKINT;
+    // ENABLE = 1: se enciende el contador al final, cuando ya está todo configurado.
+    SysTick->CTRL |= SYSTICK_CTRL_ENABLE;
+}
+
+// El nombre es el de la tabla de vectores de crt0.S (posición 0x3C). Al definirla aquí reemplaza al alias débil que apunta a Default_Handler.
+// Se ejecuta cada 1 ms.
+void SysTick_Handler(void)
+{
+    // Suma 1 milisegundo al contador.
+    contador_milisegundos++;
+    // Suma 1 milisegundo al contador del temporizador de movimiento.
+    temporizador_movimiento.contador++;
+    // Si el periodo es 0, el temporizador está detenido y no vence. Si no, se compara con >= y no con ==:
+    // así, aunque el contador haya pasado del periodo (por ejemplo, al cambiar el periodo), igual vence.
+    if (temporizador_movimiento.periodo != 0U && temporizador_movimiento.contador >= temporizador_movimiento.periodo) {
+        // Se reinicia el contador para contar otra vez desde 0 hasta el periodo.
+        temporizador_movimiento.contador = 0U;
+        // Se avisa a main que el temporizador venció: la bandera queda en 1 hasta que main la consulte.
+        temporizador_movimiento.bandera = 1U;
+    }
+}
+
+void esperar_milisegundos(uint32_t milisegundos)
+{
+    // Se guarda el instante en que empieza la espera.
+    uint32_t instante_inicial = contador_milisegundos;
+    // La resta funciona aunque el contador de 32 bits dé la vuelta. main espera aquí y la interrupción sigue contando.
+    while ((contador_milisegundos - instante_inicial) < milisegundos) { }
+}
+
+uint32_t obtener_milisegundos(void)
+{
+    // El contador es un entero de 32 bits y se lee de una sola vez: la lectura no se parte aunque la interrupción lo cambie.
+    return contador_milisegundos;
+}
+
+void iniciar_temporizador_movimiento(uint32_t periodo_ms)
+{
+    // Primero se pone el contador en 0 para que la cuenta empiece desde el principio.
+    temporizador_movimiento.contador = 0U;
+    // Se baja la bandera para que no quede un vencimiento viejo pendiente.
+    temporizador_movimiento.bandera = 0U;
+    // Se guarda el periodo nuevo. Va al final porque, al escribirlo, el temporizador empieza a poder vencer.
+    temporizador_movimiento.periodo = periodo_ms;
+}
+
+uint32_t temporizador_movimiento_vencio(void)
+{
+    // Si la bandera está en 1, el temporizador venció desde la última consulta.
+    if (temporizador_movimiento.bandera != 0U) {
+        // Se baja la bandera para consumir el aviso: la siguiente consulta devuelve 0 si no vuelve a vencer.
+        // La interrupción podría poner la bandera en 1 justo entre el if y esta línea, y ese vencimiento se perdería.
+        // Con un periodo de cientos de ms no importa: el siguiente vencimiento se detecta igual.
+        temporizador_movimiento.bandera = 0U;
+        // Devuelve 1: sí venció.
+        return 1U;
+    }
+    // La bandera está en 0: no venció desde la última consulta.
+    return 0U;
+}
+```
+
+Lo **nuevo**: `obtener_milisegundos` devuelve `contador_milisegundos`. Es un entero de 32 bits y se lee de una sola vez, así que la lectura no se parte aunque la interrupción lo cambie. El resto es del Paso 2 y del Paso 7.
+
+`inc/snake.h`
+
+```c
+#ifndef SNAKE_H
+#define SNAKE_H
+
+#include "panel.h"
+
+// Posición de un segmento del cuerpo o de la manzana, en píxeles del tablero.
+typedef struct {
+    // Columna x del píxel, de 0 a PANEL_ANCHO - 1.
+    uint8_t x;
+    // Fila y del píxel, de 0 a PANEL_ALTO - 1.
+    uint8_t y;
+} Posicion;
+
+// Cantidad de posiciones del arreglo circular del cuerpo: una por cada píxel del tablero, así la serpiente puede llenarlo.
+#define CAPACIDAD_CUERPO (PANEL_ANCHO * PANEL_ALTO)
+// Cantidad de segmentos con la que empieza la serpiente.
+#define LONGITUD_INICIAL 3U
+// Dirección sin movimiento: la serpiente está quieta hasta que se presiona A, B, C o D.
+#define DIRECCION_QUIETO 0U
+// Dirección arriba: y disminuye (el botón A).
+#define DIRECCION_ARRIBA 1U
+// Dirección derecha: x aumenta (el botón B).
+#define DIRECCION_DERECHA 2U
+// Dirección abajo: y aumenta (el botón C).
+#define DIRECCION_ABAJO 3U
+// Dirección izquierda: x disminuye (el botón D).
+#define DIRECCION_IZQUIERDA 4U
+
+// Borra la pantalla y pone la serpiente, la manzana, el puntaje y el estado de arranque.
+void iniciar_juego(void);
+// Guarda la dirección que piden los botones A a D. Si no hay ninguno de A a D presionado, no cambia la pedida.
+void pedir_direccion(uint32_t botones);
+// Hace un paso del juego: mueve la serpiente una celda o marca el fin de la partida.
+void avanzar_serpiente(void);
+
+#endif
+```
+
+- `Posicion { x, y }`: una celda del tablero con dos `uint8_t` (x hasta 31 e y hasta 15 caben; también en 32×32).
+- `CAPACIDAD_CUERPO` = `PANEL_ANCHO × PANEL_ALTO` = 512: una posición del arreglo por cada píxel, así la serpiente puede llenar el tablero. Con dos paneles cambia a 1024 sin tocar nada más.
+- `LONGITUD_INICIAL` = 3 y las cinco `DIRECCION_*`, que pasaron de `main.c` a este archivo.
+
+`src/snake.c`
+
+```c
+#include "snake.h"
+#include "graficos.h"
+#include "botones.h"
+#include "system_config.h"
+
+// Cuerpo de la serpiente: arreglo circular. Los segmentos van desde cola hasta cabeza, y son longitud en total.
+static Posicion cuerpo[CAPACIDAD_CUERPO];
+// Índice dentro de cuerpo del segmento de la cabeza (el más nuevo).
+static uint32_t cabeza = 0U;
+// Índice dentro de cuerpo del segmento de la cola (el más viejo, el primero que se apaga al moverse).
+static uint32_t cola = 0U;
+// Cantidad de segmentos de la serpiente. Crece 1 por cada manzana comida.
+static uint32_t longitud = 0U;
+// Dirección del último paso hecho: uno de los DIRECCION_*. Empieza en derecha.
+static uint32_t direccion_actual = DIRECCION_DERECHA;
+// Dirección pedida por el último botón de A a D presionado: uno de los DIRECCION_*. Empieza en quieto.
+static uint32_t direccion_pedida = DIRECCION_QUIETO;
+// Vale 0 hasta que se presiona un botón de dirección válido. Mientras vale 0, la serpiente está quieta.
+static uint32_t en_marcha = 0U;
+// Posición de la manzana roja en el tablero.
+static Posicion manzana;
+// Puntos acumulados: sube 1 por cada manzana comida. Todavía no se muestra en pantalla.
+static uint32_t puntaje = 0U;
+// Vale 1 cuando la serpiente chocó o llenó el tablero. Al terminar, la serpiente se queda quieta hasta reiniciar.
+static uint32_t juego_terminado = 0U;
+
+// Devuelve la dirección contraria a la recibida: arriba con abajo, y derecha con izquierda.
+static uint32_t direccion_opuesta(uint32_t direccion)
+{
+    // Si la dirección es arriba, la contraria es abajo.
+    if (direccion == DIRECCION_ARRIBA) {
+        return DIRECCION_ABAJO;
+    }
+    // Si la dirección es abajo, la contraria es arriba.
+    if (direccion == DIRECCION_ABAJO) {
+        return DIRECCION_ARRIBA;
+    }
+    // Si la dirección es derecha, la contraria es izquierda.
+    if (direccion == DIRECCION_DERECHA) {
+        return DIRECCION_IZQUIERDA;
+    }
+    // Si la dirección es izquierda, la contraria es derecha.
+    if (direccion == DIRECCION_IZQUIERDA) {
+        return DIRECCION_DERECHA;
+    }
+    // Sin dirección (quieto) no hay contraria: se devuelve quieto.
+    return DIRECCION_QUIETO;
+}
+
+// Devuelve 1 si algún segmento del cuerpo está en la posición (x, y), y 0 si ninguno está.
+static uint32_t celda_ocupada(uint32_t x, uint32_t y)
+{
+    // Se recorren los segmentos desde la cola: son longitud segmentos en total.
+    for (uint32_t i = 0U; i < longitud; i++) {
+        // Índice real del segmento i dentro del arreglo circular: la vuelta al principio la hace el módulo.
+        uint32_t indice = (cola + i) % CAPACIDAD_CUERPO;
+        // Si el segmento está en la posición buscada, la celda está ocupada.
+        if (cuerpo[indice].x == x && cuerpo[indice].y == y) {
+            return 1U;
+        }
+    }
+    // Ningún segmento está en esa posición: la celda está libre.
+    return 0U;
+}
+
+// Pone la manzana en una celda libre y la enciende en rojo. Empieza en la celda que indican los milisegundos y,
+// si está ocupada, pasa a la siguiente (circular).
+// Aviso: prueba como máximo CAPACIDAD_CUERPO celdas y cada prueba recorre el cuerpo. Solo tarda mucho si el tablero está casi lleno.
+static void colocar_manzana(void)
+{
+    // Celda de partida: los milisegundos desde el arranque, cortados al tamaño del tablero.
+    uint32_t celda_inicial = obtener_milisegundos() % CAPACIDAD_CUERPO;
+    // Se prueban todas las celdas del tablero una sola vez, empezando por la celda de partida.
+    for (uint32_t i = 0U; i < CAPACIDAD_CUERPO; i++) {
+        // Celda que se prueba en esta vuelta: si pasa del final del tablero, vuelve al principio.
+        uint32_t celda = (celda_inicial + i) % CAPACIDAD_CUERPO;
+        // Columna x de la celda: el resto de dividir la celda entre el ancho del tablero.
+        uint32_t x = celda % PANEL_ANCHO;
+        // Fila y de la celda: el cociente de dividir la celda entre el ancho del tablero.
+        uint32_t y = celda / PANEL_ANCHO;
+        // Si la celda no tiene ningún segmento del cuerpo, la manzana va ahí.
+        if (celda_ocupada(x, y) == 0U) {
+            // Se guarda la posición de la manzana.
+            manzana.x = x;
+            manzana.y = y;
+            // Se enciende la manzana en rojo.
+            encender_pixel(x, y, COLOR_ROJO);
+            // La manzana ya está colocada: no hace falta seguir buscando.
+            return;
+        }
+    }
+    // Ninguna celda está libre: la serpiente llena el tablero, así que la partida termina.
+    juego_terminado = 1U;
+}
+
+void iniciar_juego(void)
+{
+    // Se borra la pantalla para quitar lo que quedó de la partida anterior.
+    borrar_pantalla();
+    // La serpiente empieza con LONGITUD_INICIAL segmentos.
+    longitud = LONGITUD_INICIAL;
+    // La cola es el primer segmento del arreglo: índice 0.
+    cola = 0U;
+    // La cabeza es el último de los segmentos iniciales: índice LONGITUD_INICIAL - 1.
+    cabeza = LONGITUD_INICIAL - 1U;
+    // Columna del centro del panel. Los segmentos se ponen a su izquierda y en el centro.
+    uint32_t x = PANEL_ANCHO / 2U;
+    // Fila del centro del panel.
+    uint32_t y = PANEL_ALTO / 2U;
+    // Segmento 0 (cola): dos columnas a la izquierda del centro.
+    cuerpo[0].x = x - 2U;
+    cuerpo[0].y = y;
+    // Segmento 1: una columna a la izquierda del centro.
+    cuerpo[1].x = x - 1U;
+    cuerpo[1].y = y;
+    // Segmento 2 (cabeza): el centro.
+    cuerpo[2].x = x;
+    cuerpo[2].y = y;
+    // Se encienden los tres segmentos en verde.
+    encender_pixel(x - 2U, y, COLOR_VERDE);
+    encender_pixel(x - 1U, y, COLOR_VERDE);
+    encender_pixel(x, y, COLOR_VERDE);
+    // La serpiente mira a la derecha, pero no se mueve hasta que se presione un botón válido.
+    direccion_actual = DIRECCION_DERECHA;
+    // No hay dirección pedida todavía.
+    direccion_pedida = DIRECCION_QUIETO;
+    // La serpiente está quieta hasta el primer botón válido.
+    en_marcha = 0U;
+    // El puntaje vuelve a 0.
+    puntaje = 0U;
+    // La partida está en curso.
+    juego_terminado = 0U;
+    // Se coloca la primera manzana en una celda libre.
+    colocar_manzana();
+}
+
+void pedir_direccion(uint32_t botones)
+{
+    // Si el botón A está presionado, la dirección pedida es arriba.
+    if ((botones & BOTON_A) != 0U) {
+        direccion_pedida = DIRECCION_ARRIBA;
+    }
+    // Si el botón B está presionado, la dirección pedida es derecha.
+    if ((botones & BOTON_B) != 0U) {
+        direccion_pedida = DIRECCION_DERECHA;
+    }
+    // Si el botón C está presionado, la dirección pedida es abajo.
+    if ((botones & BOTON_C) != 0U) {
+        direccion_pedida = DIRECCION_ABAJO;
+    }
+    // Si el botón D está presionado, la dirección pedida es izquierda.
+    if ((botones & BOTON_D) != 0U) {
+        direccion_pedida = DIRECCION_IZQUIERDA;
+    }
+}
+
+void avanzar_serpiente(void)
+{
+    // Paso 1: si la partida terminó, no se hace nada: la serpiente queda congelada.
+    if (juego_terminado == 1U) {
+        return;
+    }
+    // Paso 2: si se pidió una dirección que no es la opuesta a la actual, se cambia la dirección.
+    // La opuesta se ignora para que la serpiente no se vuelva sobre sí misma.
+    if (direccion_pedida != DIRECCION_QUIETO && direccion_pedida != direccion_opuesta(direccion_actual)) {
+        // La dirección del último paso pasa a ser la pedida.
+        direccion_actual = direccion_pedida;
+        // Con una dirección válida, la serpiente empieza a moverse.
+        en_marcha = 1U;
+    }
+    // Paso 3: antes del primer botón válido, la serpiente sigue quieta.
+    if (en_marcha == 0U) {
+        return;
+    }
+
+    // Paso 4: se calcula la cabeza nueva, un paso desde la cabeza actual en la dirección actual.
+    // La cabeza actual es el segmento del índice cabeza.
+    uint32_t nueva_x = cuerpo[cabeza].x;
+    uint32_t nueva_y = cuerpo[cabeza].y;
+    // Arriba: y disminuye. Si y ya es 0 (primera fila), la cabeza saldría del tablero y la partida termina.
+    if (direccion_actual == DIRECCION_ARRIBA) {
+        if (nueva_y == 0U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_y = nueva_y - 1U;
+    }
+    // Abajo: y aumenta. Si y ya es la última fila, la partida termina.
+    if (direccion_actual == DIRECCION_ABAJO) {
+        if (nueva_y == PANEL_ALTO - 1U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_y = nueva_y + 1U;
+    }
+    // Izquierda: x disminuye. Si x ya es 0 (primera columna), la partida termina.
+    if (direccion_actual == DIRECCION_IZQUIERDA) {
+        if (nueva_x == 0U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_x = nueva_x - 1U;
+    }
+    // Derecha: x aumenta. Si x ya es la última columna, la partida termina.
+    if (direccion_actual == DIRECCION_DERECHA) {
+        if (nueva_x == PANEL_ANCHO - 1U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_x = nueva_x + 1U;
+    }
+
+    // Paso 5: si la cabeza nueva cae sobre el cuerpo, la partida termina. Esto incluye la cola,
+    // porque la cola todavía no se movió en este paso.
+    if (celda_ocupada(nueva_x, nueva_y) == 1U) {
+        juego_terminado = 1U;
+        return;
+    }
+
+    // Paso 6: la cabeza avanza una posición en el arreglo circular y guarda la posición nueva.
+    cabeza = (cabeza + 1U) % CAPACIDAD_CUERPO;
+    cuerpo[cabeza].x = nueva_x;
+    cuerpo[cabeza].y = nueva_y;
+    // Se enciende el píxel de la nueva cabeza en verde.
+    encender_pixel(nueva_x, nueva_y, COLOR_VERDE);
+
+    // Paso 7: si la cabeza llegó a la manzana, la serpiente crece: la cola no se mueve, suma 1 segmento
+    // y 1 punto, y aparece otra manzana.
+    if (nueva_x == manzana.x && nueva_y == manzana.y) {
+        // Un segmento más.
+        longitud++;
+        // Un punto más.
+        puntaje++;
+        // Nueva manzana en una celda libre.
+        colocar_manzana();
+    } else {
+        // Si no hubo manzana, la cola se mueve: se apaga el píxel de la cola en negro para que no quede un segmento viejo.
+        encender_pixel(cuerpo[cola].x, cuerpo[cola].y, COLOR_NEGRO);
+        // El índice de la cola avanza una posición en el arreglo circular.
+        cola = (cola + 1U) % CAPACIDAD_CUERPO;
+    }
+}
+```
+
+**Variables (todas `static`, sin `volatile`):** ninguna interrupción las toca; solo las usa el código principal. `direccion_actual` es la única en `.data` (4 bytes), porque su valor inicial (derecha) no es 0; las demás empiezan en 0 y van a `.bss`.
+- `direccion_actual`: la dirección del **último paso hecho**.
+- `direccion_pedida`: la que pidió el último botón. Empieza en quieto.
+- `en_marcha`: 0 hasta el primer botón válido.
+- `manzana`, `puntaje` y `juego_terminado`.
+
+**Funciones auxiliares:**
+- `direccion_opuesta`: arriba ↔ abajo y derecha ↔ izquierda; para quieto devuelve quieto.
+- `celda_ocupada(x, y)`: recorre los `longitud` segmentos con `(cola + i) % CAPACIDAD_CUERPO` y devuelve 1 si alguno está en esa posición.
+- `colocar_manzana`: parte de `obtener_milisegundos() % CAPACIDAD_CUERPO` y prueba esa celda y las siguientes, dando la vuelta, hasta encontrar una libre. La celda se convierte en posición con `x = celda % 32` e `y = celda / 32`. Guarda la posición y enciende el píxel rojo. Si ninguna celda está libre, la serpiente llena el tablero y el juego termina.
+
+**`iniciar_juego`:** borra la pantalla, pone `longitud = 3`, `cola = 0` y `cabeza = 2`, los tres segmentos en `(14, 8)`, `(15, 8)` y `(16, 8)` encendidos en verde, `direccion_actual = derecha`, `direccion_pedida = quieto`, `en_marcha = 0`, `puntaje = 0` y `juego_terminado = 0`, y coloca la manzana.
+
+**`pedir_direccion(botones)`:** cuatro `if` en orden A, B, C, D que asignan `direccion_pedida`. Si no hay ninguno de A a D presionado, la pedida no cambia: sigue siendo la última.
+
+**`avanzar_serpiente`** (un paso, siete pasos internos):
+1. Si el juego terminó, no hace nada.
+2. **Regla de 180°:** si hay una dirección pedida y **no** es la opuesta a `direccion_actual`, la acepta y pone `en_marcha = 1`. Se compara contra el último paso hecho, no contra la otra pedida: así, yendo a la derecha, pedir arriba y luego izquierda antes del siguiente paso no da un giro de 180° (el pedido de izquierda se ignora y la serpiente sigue a la derecha).
+3. Si todavía no se presionó un botón válido, sale: sigue quieta.
+4. Calcula la cabeza nueva. Si sale del tablero (y = 0 yendo arriba, y = 15 yendo abajo, x = 0 yendo a la izquierda o x = 31 yendo a la derecha), el juego termina. Las restas están protegidas: nunca se resta 1 a un 0 sin signo.
+5. Si la celda nueva está ocupada por el cuerpo, el juego termina. Esto **incluye la cola**, porque en este punto la cola todavía no se movió (decisión de simplicidad; en el Snake clásico se permite entrar a la celda que la cola acaba de dejar).
+6. La cabeza avanza: nuevo índice, guarda la posición y enciende el píxel verde.
+7. **Si es la manzana:** la longitud sube 1, el puntaje sube 1 y se coloca otra manzana; la cola no se mueve. **Si no:** apaga el píxel de la cola y la cola avanza.
+
+`main.c`
+
+```c
+#include "system_config.h"
+#include "panel.h"
+#include "botones.h"
+#include "snake.h"
+
+// Tiempo entre un paso de la serpiente y el siguiente, en milisegundos. La serpiente avanza una celda cada 200 ms.
+#define PERIODO_MOVIMIENTO_MS 200U
+
+int main(void)
+{
+    // Primero el reloj, antes de usar cualquier periférico: deja el sistema a 84 MHz.
+    configurar_reloj();
+    // Se enciende la base de tiempo de 1 ms (SysTick), que usa el temporizador de movimiento.
+    iniciar_systick();
+
+    // Se configuran los pines del panel como salidas.
+    configurar_panel();
+    // Se enciende TIM3: desde aquí, una interrupción cada 1 ms dibuja una fase del framebuffer en el panel.
+    iniciar_refresco_panel();
+
+    // Se configuran los seis botones como entradas con pull-up.
+    configurar_botones();
+    // El temporizador de movimiento cuenta desde 0 con un periodo de 200 ms.
+    iniciar_temporizador_movimiento(PERIODO_MOVIMIENTO_MS);
+    // La serpiente aparece en el centro, quieta, y se coloca la primera manzana.
+    iniciar_juego();
+
+    while (1) {
+        // Los botones se leen en cada vuelta del bucle, no solo cuando vence el temporizador, para no perder pulsaciones cortas.
+        uint32_t botones = leer_botones();
+        // F reinicia la partida (mientras se mantiene presionada); si no, los botones A a D piden una dirección.
+        if ((botones & BOTON_F) != 0U) {
+            iniciar_juego();
+        } else {
+            pedir_direccion(botones);
+        }
+
+        // La bandera del temporizador se consume siempre, aunque haya pausa, para que no quede un vencimiento viejo pendiente.
+        if (temporizador_movimiento_vencio() == 1U) {
+            // E pausa el juego solo mientras se mantiene presionada: si no está presionada, la serpiente avanza un paso.
+            if ((botones & BOTON_E) == 0U) {
+                avanzar_serpiente();
+            }
+        }
+    }
+}
+```
+
+El mismo bucle del Paso 7 con las funciones del juego: lee los botones en cada vuelta; si F está presionada, `iniciar_juego()`; si no, `pedir_direccion(botones)`. Cuando vence el temporizador de 200 ms y E no está presionada, `avanzar_serpiente()`. El orden de arranque es el de siempre y termina con `iniciar_juego()`.
+
+### Lo que el `revisor` comprobó por simulación
+El `revisor` escribió un programa de PC que usa `snake.c` sin modificarlo, con un framebuffer simulado (con ASan y UBSan), y lo comparó paso a paso con un modelo de referencia. Exigió que el framebuffer fuera exactamente el cuerpo en verde más la manzana en rojo, sin píxeles de más ni de menos; que los segmentos fueran adyacentes y distintos; que la manzana no cayera sobre el cuerpo ni fuera del tablero; y que `cabeza == (cola + longitud − 1) % CAPACIDAD_CUERPO`.
+- Tablero real 32×16: 25 707 partidas y 956 270 pasos, 0 fallos. 32×32: 14 903 partidas y 923 814 pasos, 0 fallos.
+- Tableros pequeños (4×2, 4×3, 4×4, 5×3, 5×4, 5×5, 6×2 y 6×4) para ejercitar el arreglo envuelto y el tablero lleno: entre 123 967 y 191 861 partidas cada uno, 0 fallos. En total, unos 10 millones de pasos.
+- Casos dirigidos: el arranque, la regla de 180° con dos pedidos entre pasos, las cuatro paredes, el choque con la cola, comer, y que `avanzar_serpiente` no hace nada tras terminar. Con 4×2, 4×4, 5×4, 6×4 y 5×5 se llenó el tablero y el juego terminó por «sin celda libre».
+- No se pudo forzar el tablero lleno en 4×3 y 5×3: ahí hay solo partidas aleatorias.
+- Limitación: es una simulación en x86; no ejercita el hardware ni las interrupciones.
+
+### Límites conocidos (no son errores)
+- **La manzana no es tan aleatoria como parece.** Casi siempre se come justo cuando vence el temporizador, es decir, en `T0 + 200·k` milisegundos. Como 200 ≡ 8 (módulo 512), la celda de partida solo toma 64 valores distintos de 512, y como `celda % 32` es la columna, las manzanas nuevas tienden a salir en 4 columnas (una de cada 8). Por ejemplo, con `T0 = 1234` serían `x = 2, 10, 18 y 26`, en cualquier fila. La primera manzana de cada arranque tiende a ser la misma. Daniela decidió **dejarlo así** hasta el LFSR del paso 9, que lo reemplaza.
+- **Parpadeo con F mantenida.** Mientras se mantiene F, cada vuelta del bucle ejecuta `iniciar_juego`, que borra los 512 píxeles (unos 0,3 ms estimados). El panel puede parpadear y la manzana cambia de lugar en cada vuelta, pero no daña nada. Decisión: **dejarlo**.
+- **`colocar_manzana` con el tablero casi lleno** cuesta, estimado, unos 50 ms en 32×16 y cerca de 190 ms en 32×32. No pierde botones ni ticks (solo retrasa un paso). Se deja.
+- **Tiempos estimados** por conteo de instrucciones (~22 instrucciones por vuelta de `celda_ocupada`), no medidos en la placa.
+
+### Modificaciones y correcciones
+- Las `DIRECCION_*` y la regla de dirección pasan de `main.c` a `snake.c`; las funciones del punto desaparecen de `main.c`.
+- Sin correcciones del `revisor`.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Posición de la manzana | (a) contador de ms de SysTick, (b) lista fija, (c) adelantar el LFSR | (a) contador de milisegundos; el LFSR del paso 9 la reemplaza |
+| Arranque | 3 segmentos quieta; 3 segmentos avanzando; 1 segmento | 3 segmentos verdes en el centro, mirando a la derecha, quieta hasta el primer botón |
+| Al morir | Se congela y F reinicia, o se reinicia sola | Se congela y F reinicia |
+| Puntaje | Solo variable o mostrarlo al morir | Solo una variable (se muestra en el paso 10) |
+| Dónde va el juego | `snake.h/.c` o `main.c` | `snake.h` y `snake.c` |
+| Cuerpo | Arreglo de structs, dos arreglos o un arreglo de números de celda | Arreglo circular de structs `Posicion {x, y}` |
+| Choque y manzana | Recorrer el cuerpo o leer el framebuffer | Recorrer el cuerpo |
+| Aleatoriedad de la manzana tras la revisión | Dejarlo, mezclarlo con un contador de vueltas o adelantar el LFSR | Dejarlo |
+| Parpadeo con F mantenida | Dejarlo, reiniciar solo al presionar o al soltar F | Dejarlo |
+
+Fijados por el agente principal con la especificación (Daniela puede objetarlos): la regla de 180° se compara con la dirección del último paso hecho; el choque incluye la cola; el periodo se queda en 200 ms; si no queda celda libre, el juego termina; y las `DIRECCION_*` se mueven a `snake.h`.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 4058`, `data 4`, `bss 1588`. `cuerpo` ocupa 1024 bytes (`nm -S`); la RAM usada es de 1592 bytes sobre 131 072, y la pila arranca en `0x20020000`.
+- Simulación del `revisor` (ver arriba): unos 10 millones de pasos, 0 fallos.
+- `make flash`: voltaje 3,259 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa (2026-11-10): Daniela indicó que se continuara con el paso tras grabarlo (confirmación general de funcionamiento; no se detalló prueba por prueba: arranque, giros, crecimiento, paredes, choque con el cuerpo, E y F).
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación.
+- El `programador` avisó de que `main.c` tenía un cambio sin commit (el color del punto cambiado a `COLOR_MAGENTA`) que desapareció al reescribir el archivo, porque el código del punto se elimina en este paso. El commit del Paso 7 (`fbe97be`) sigue intacto con `COLOR_VERDE`. La serpiente es verde por decisión de Daniela.
+
+### Preguntas de autoevaluación
+1. En el arreglo circular, ¿dónde quedan `cola` y `cabeza` si la serpiente de 3 segmentos avanza 510 pasos sin comer?
+   Al arrancar `cola = 0` y `cabeza = 2`. Tras 510 pasos, ambos índices avanzaron 510: `cola = 510` y `cabeza = (2 + 510) % 512 = 0`. La serpiente ocupa los índices 510, 511 y 0; el `%` hace que el índice vuelva al principio.
+2. ¿Por qué la regla de 180° se compara con `direccion_actual` y no con la última dirección pedida?
+   Porque entre dos pasos se pueden pedir varias direcciones: yendo a la derecha, pedir arriba y luego izquierda no es un giro válido de 180° respecto a lo que la serpiente hace. Comparar con la dirección del último paso hecho evita que se dé la vuelta sobre sí misma.
+3. ¿Qué pasa con la cola al comer una manzana y por qué?
+   No se mueve: ni se apaga su píxel ni avanza su índice. La cabeza sí avanza, así que la serpiente queda con un segmento más (`longitud` sube 1).
+4. ¿Por qué `avanzar_serpiente` considera que chocar con la cola termina el juego y en qué se diferencia del Snake clásico?
+   Porque comprueba el choque antes de mover la cola, así que la cola todavía ocupa su celda. En el Snake clásico se permite entrar a la celda que la cola va a dejar; aquí no, por simplicidad.
+5. ¿Por qué las manzanas salen casi siempre en las mismas columnas y qué lo arregla?
+   La manzana se coloca justo cuando vence el temporizador, en `T0 + 200·k` milisegundos; como `200 mod 512 = 8`, la celda de partida solo toma 64 valores y `celda % 32` (la columna) queda repetida cada 8. Un generador pseudoaleatorio (el LFSR del paso 9) lo arregla.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.

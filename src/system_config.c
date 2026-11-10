@@ -114,6 +114,12 @@ void esperar_milisegundos(uint32_t milisegundos)
     while ((contador_milisegundos - instante_inicial) < milisegundos) { }
 }
 
+uint32_t obtener_milisegundos(void)
+{
+    // El contador es un entero de 32 bits y se lee de una sola vez: la lectura no se parte aunque la interrupción lo cambie.
+    return contador_milisegundos;
+}
+
 void iniciar_temporizador_movimiento(uint32_t periodo_ms)
 {
     // Primero se pone el contador en 0 para que la cuenta empiece desde el principio.
