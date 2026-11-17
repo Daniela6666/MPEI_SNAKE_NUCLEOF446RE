@@ -3,7 +3,7 @@
 
 #include "panel.h"
 
-// Posición de un segmento del cuerpo o de la manzana, en píxeles del tablero.
+// Posición de un segmento del cuerpo, de la manzana o del veneno, en píxeles del tablero.
 typedef struct {
     // Columna x del píxel, de 0 a PANEL_ANCHO - 1.
     uint8_t x;
@@ -25,6 +25,14 @@ typedef struct {
 #define DIRECCION_ABAJO 3U
 // Dirección izquierda: x disminuye (el botón D).
 #define DIRECCION_IZQUIERDA 4U
+// Pasos del juego que el veneno azul se queda en pantalla: 25 pasos (5 s a 200 ms por paso).
+#define VENENO_DURACION_PASOS 25U
+// Pasos del juego que el veneno espera escondido antes de reaparecer: 50 pasos (10 s).
+#define VENENO_ESPERA_PASOS 50U
+// Segmentos que pierde la serpiente al comer veneno.
+#define VENENO_SEGMENTOS_PERDIDOS 2U
+// Puntos que pierde el puntaje al comer veneno. Nunca baja de 0.
+#define VENENO_PUNTOS_PERDIDOS 2U
 
 // Borra la pantalla y pone la serpiente, la manzana, el puntaje y el estado de arranque.
 void iniciar_juego(void);

@@ -15,6 +15,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 6 — Biblioteca gráfica mínima](#paso-6--biblioteca-gráfica-mínima)
 - [Paso 7 — Mover un punto con los botones](#paso-7--mover-un-punto-con-los-botones)
 - [Paso 8 — Snake básico (primer avance para el profesor)](#paso-8--snake-básico-primer-avance-para-el-profesor)
+- [Paso 9 — Números aleatorios (LFSR) y veneno azul](#paso-9--números-aleatorios-lfsr-y-veneno-azul)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -113,6 +114,11 @@ Cada término se define la primera vez que aparece, en una frase.
 | Módulo (`%`) | Resto de una división; `(i + 1) % 512` da la vuelta al llegar a 512. |
 | Semilla | Valor de partida del que se calcula un número «al azar»; aquí, los milisegundos desde el arranque. |
 | Juego congelado | Estado en que la partida terminó y `avanzar_serpiente` no hace nada hasta que F reinicia. |
+| LFSR | Registro de desplazamiento con realimentación lineal: se desplaza un bit a la derecha y el bit nuevo es un XOR de algunos bits del propio registro; genera una secuencia pseudoaleatoria. |
+| Tap (derivación) | Bit del LFSR que entra en el XOR del bit nuevo; aquí los bits 0, 2, 3 y 5 (taps 16, 14, 13 y 11 del polinomio). |
+| Pseudoaleatorio | Que parece aleatorio pero sale de una fórmula fija y depende de la semilla; con la misma semilla repite la misma secuencia. |
+| Periodo del LFSR | Cantidad de valores distintos antes de repetirse; con estos taps son 65 535 (todos los de 16 bits menos el 0). |
+| Veneno (paso del juego) | El veneno azul cuenta su tiempo en pasos del juego (cada paso de la serpiente), no en milisegundos; así se pausa con E y se congela al morir. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
 
 ## Plantilla de sección de paso
@@ -4569,6 +4575,7 @@ Convertir el punto móvil en el primer Snake jugable: una serpiente verde de 3 p
 - `inc/system_config.h` y `src/system_config.c` (modificados): `obtener_milisegundos`.
 - `main.c` (modificado): el bucle ahora llama al juego en vez de mover un punto.
 - `src/botones.c`, `src/panel.c` y `src/graficos.c` no cambian. `graficos.c` ya se usa: `borrar_pantalla`.
+- El Paso 9 cambia después `snake.h` y `snake.c` (y un comentario de `system_config.h`): los que aparecen en esta sección son las **versiones del Paso 8**.
 
 ### Concepto de clase que se usa
 Arreglos y structs, índices con módulo (arreglo circular), `static` para datos privados de un módulo, reutilización de la base de tiempo (SysTick y temporizador de software) y de los botones. Es el paso con más lógica de programa y menos registros.
@@ -5199,6 +5206,637 @@ Fijados por el agente principal con la especificación (Daniela puede objetarlos
    Porque comprueba el choque antes de mover la cola, así que la cola todavía ocupa su celda. En el Snake clásico se permite entrar a la celda que la cola va a dejar; aquí no, por simplicidad.
 5. ¿Por qué las manzanas salen casi siempre en las mismas columnas y qué lo arregla?
    La manzana se coloca justo cuando vence el temporizador, en `T0 + 200·k` milisegundos; como `200 mod 512 = 8`, la celda de partida solo toma 64 valores y `celda % 32` (la columna) queda repetida cada 8. Un generador pseudoaleatorio (el LFSR del paso 9) lo arregla.
+
+## Paso 9 — Números aleatorios (LFSR) y veneno azul
+
+### Objetivo
+Reemplazar el cálculo de la posición de la manzana con milisegundos (que la dejaba en pocas columnas) por un **generador pseudoaleatorio LFSR** sembrado con el primer botón, y agregar el **veneno azul**: aparece en una celda libre, se queda un tiempo y desaparece solo; si la serpiente lo come, pierde 2 segmentos y 2 puntos.
+
+### Archivos creados o modificados
+- `inc/aleatorio.h` y `src/aleatorio.c` (nuevos): el LFSR de 16 bits (`sembrar_aleatorio` y `siguiente_aleatorio`).
+- `inc/snake.h` y `src/snake.c` (modificados): el veneno, la búsqueda de celdas libres con el LFSR y la siembra en `pedir_direccion`.
+- `inc/system_config.h` (modificado): solo el comentario de `obtener_milisegundos`.
+- `main.c` no cambia (se restauró desde el commit del Paso 8, porque la copia de trabajo tenía el código del punto del Paso 7).
+
+### Concepto de clase que se usa
+Generadores pseudoaleatorios con registros de desplazamiento y realimentación (LFSR), operaciones de bits (XOR, desplazamientos) y máquinas de estado simples (veneno escondido o visible con un contador de pasos).
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó, simuló el LFSR y las partidas en un programa de PC y solo cambió tres comentarios; el agente principal leyó todo, recompiló y grabó la placa.
+
+**Fuentes:** no hay datos del RM0390. Los taps del LFSR (bits 16, 14, 13 y 11, polinomio `x^16 + x^14 + x^13 + x^11 + 1`) son los de un LFSR de 16 bits de periodo máximo; el `revisor` comprobó por simulación que recorre los 65 535 estados no nulos.
+
+### Cómo funciona el LFSR
+Un **LFSR** (registro de desplazamiento con realimentación lineal) es un registro de 16 bits que en cada paso se desplaza una posición a la derecha y mete por la izquierda un bit nuevo, que sale de un XOR de algunos de sus propios bits (los *taps*). Aquí:
+
+```
+bit_nuevo = bit0 XOR bit2 XOR bit3 XOR bit5   (taps 16, 14, 13 y 11 del polinomio)
+estado    = (estado >> 1) | (bit_nuevo << 15)
+```
+
+Ejemplo desde el estado inicial `0x0001`: el bit 0 vale 1 y los bits 2, 3 y 5 valen 0, así que `bit_nuevo = 1` y el estado pasa a `0x8000`. Luego los bits 0, 2, 3 y 5 valen 0, el bit nuevo es 0 y el 1 se va corriendo a la derecha: `0x4000`, `0x2000`, …, hasta que llega al bit 5 (`0x0020`) y vuelve a entrar un 1 por la izquierda.
+
+- **Periodo máximo:** con estos taps, el registro recorre los 65 535 valores distintos de 1 a 65 535 antes de repetirse.
+- **Nunca puede valer 0:** el XOR de ceros es 0, así que un estado en 0 se quedaría en 0 para siempre. Por eso empieza en 1 y una semilla que dé 0 se reemplaza por 1.
+- **Es pseudoaleatorio:** la secuencia es fija y depende solo de la semilla. Por eso hace falta **sembrarla con algo que cambie** entre arranques: si no, cada partida tendría las mismas manzanas.
+- **16 desplazamientos por llamada:** con un solo desplazamiento, cada número sería el anterior corrido un bit, y las posiciones de la manzana y del veneno quedarían muy parecidas entre sí. Con 16 desplazamientos, los 16 bits del resultado son nuevos. Como `gcd(16, 65535) = 1`, el periodo de las salidas sigue siendo 65 535.
+- **Reparto de las celdas (medido por el `revisor` sobre un periodo completo):** `% 512` hace que cada celda salga 127 o 128 veces, y `% 32` (la columna) 2047 o 2048 veces. No hay celdas ni columnas favorecidas.
+
+### Por qué se siembra con la primera pulsación
+- La semilla son los **milisegundos desde el arranque** (`obtener_milisegundos()`) en el instante en que se presiona por primera vez A, B, C o D. Ese instante cambia en cada arranque, porque depende de cuándo presiona la persona.
+- Se siembra en `pedir_direccion` y no cuando vence el temporizador. En el vencimiento, los milisegundos son siempre `T0 + 200·k` (múltiplos de 200 más una constante): era justo eso lo que dejaba las manzanas del Paso 8 en 4 columnas.
+- Se siembra **una sola vez por arranque** (`aleatorio_sembrado`). Después de F el LFSR sigue desde donde estaba, sin volver a sembrarse.
+- Comprobación del `revisor`: con semillas `T0 + 200·k` para k de 0 a 200 salen entre 162 y 169 celdas distintas en la primera llamada, y las 32 columnas, lo esperado al azar.
+- **La primera manzana de cada arranque es fija:** se coloca en `iniciar_juego` antes de cualquier botón, con el LFSR en su valor inicial 1. Tras 16 desplazamientos el estado es `26625` (`0x6801`) y `26625 % 512 = 1`, que es la celda `(1, 0)`.
+
+### Código explicado
+
+`inc/aleatorio.h`
+
+```c
+#ifndef ALEATORIO_H
+#define ALEATORIO_H
+
+#include <stdint.h>
+
+// Pone la semilla del generador. Si la semilla queda en 0, se usa 1 en su lugar.
+void sembrar_aleatorio(uint32_t semilla);
+// Devuelve el siguiente número pseudoaleatorio de 16 bits (LFSR de Fibonacci).
+uint32_t siguiente_aleatorio(void);
+
+#endif
+```
+
+`src/aleatorio.c`
+
+```c
+#include "aleatorio.h"
+
+// Cantidad de desplazamientos del LFSR que se hacen en cada llamada a siguiente_aleatorio.
+#define DESPLAZAMIENTOS_POR_LLAMADA 16U
+// Semilla de reemplazo: si la semilla pedida da 0, el LFSR usa 1 en su lugar.
+#define SEMILLA_DE_REEMPLAZO 1U
+
+// Estado del LFSR de 16 bits. Nunca puede valer 0: un LFSR en 0 se queda en 0 para siempre.
+// Empieza en 1 para que el generador funcione aunque nunca se haya sembrado.
+static uint16_t estado_lfsr = 1U;
+
+void sembrar_aleatorio(uint32_t semilla)
+{
+    // Se guardan solo los 16 bits bajos de la semilla, que es el tamaño del estado.
+    estado_lfsr = (uint16_t)(semilla & 0xFFFFU);
+    // Si la semilla quedó en 0, el LFSR se quedaría en 0 para siempre: se usa la semilla de reemplazo.
+    if (estado_lfsr == 0U) {
+        estado_lfsr = SEMILLA_DE_REEMPLAZO;
+    }
+}
+
+uint32_t siguiente_aleatorio(void)
+{
+    // Se hacen varios desplazamientos por llamada: con uno solo, cada número sería el anterior corrido un bit
+    // y las posiciones de la manzana y del veneno quedarían muy parecidas entre sí.
+    for (uint32_t i = 0U; i < DESPLAZAMIENTOS_POR_LLAMADA; i++) {
+        // Bit nuevo: XOR de los bits 0, 2, 3 y 5 del estado (taps 16, 14, 13 y 11 del polinomio x^16 + x^14 + x^13 + x^11 + 1).
+        uint16_t bit = ((estado_lfsr >> 0) ^ (estado_lfsr >> 2) ^ (estado_lfsr >> 3) ^ (estado_lfsr >> 5)) & 1U;
+        // El estado se desplaza una posición a la derecha y el bit nuevo entra por la posición 15.
+        estado_lfsr = (estado_lfsr >> 1) | (bit << 15);
+    }
+    // Se devuelve el estado ya desplazado como número aleatorio.
+    return estado_lfsr;
+}
+```
+
+- `DESPLAZAMIENTOS_POR_LLAMADA` = 16 y `SEMILLA_DE_REEMPLAZO` = 1: constantes con nombre.
+- `estado_lfsr` es `static uint16_t`, empieza en 1 y nunca vale 0.
+- `sembrar_aleatorio(semilla)`: guarda los 16 bits bajos de la semilla (`semilla & 0xFFFF`); si quedan en 0, usa 1.
+- `siguiente_aleatorio()`: en un `for` de 16 vueltas calcula el bit nuevo con el XOR de los bits 0, 2, 3 y 5, desplaza el estado a la derecha y mete el bit nuevo por la posición 15. Devuelve el estado.
+
+`inc/snake.h`
+
+```c
+#ifndef SNAKE_H
+#define SNAKE_H
+
+#include "panel.h"
+
+// Posición de un segmento del cuerpo, de la manzana o del veneno, en píxeles del tablero.
+typedef struct {
+    // Columna x del píxel, de 0 a PANEL_ANCHO - 1.
+    uint8_t x;
+    // Fila y del píxel, de 0 a PANEL_ALTO - 1.
+    uint8_t y;
+} Posicion;
+
+// Cantidad de posiciones del arreglo circular del cuerpo: una por cada píxel del tablero, así la serpiente puede llenarlo.
+#define CAPACIDAD_CUERPO (PANEL_ANCHO * PANEL_ALTO)
+// Cantidad de segmentos con la que empieza la serpiente.
+#define LONGITUD_INICIAL 3U
+// Dirección sin movimiento: la serpiente está quieta hasta que se presiona A, B, C o D.
+#define DIRECCION_QUIETO 0U
+// Dirección arriba: y disminuye (el botón A).
+#define DIRECCION_ARRIBA 1U
+// Dirección derecha: x aumenta (el botón B).
+#define DIRECCION_DERECHA 2U
+// Dirección abajo: y aumenta (el botón C).
+#define DIRECCION_ABAJO 3U
+// Dirección izquierda: x disminuye (el botón D).
+#define DIRECCION_IZQUIERDA 4U
+// Pasos del juego que el veneno azul se queda en pantalla: 25 pasos (5 s a 200 ms por paso).
+#define VENENO_DURACION_PASOS 25U
+// Pasos del juego que el veneno espera escondido antes de reaparecer: 50 pasos (10 s).
+#define VENENO_ESPERA_PASOS 50U
+// Segmentos que pierde la serpiente al comer veneno.
+#define VENENO_SEGMENTOS_PERDIDOS 2U
+// Puntos que pierde el puntaje al comer veneno. Nunca baja de 0.
+#define VENENO_PUNTOS_PERDIDOS 2U
+
+// Borra la pantalla y pone la serpiente, la manzana, el puntaje y el estado de arranque.
+void iniciar_juego(void);
+// Guarda la dirección que piden los botones A a D. Si no hay ninguno de A a D presionado, no cambia la pedida.
+void pedir_direccion(uint32_t botones);
+// Hace un paso del juego: mueve la serpiente una celda o marca el fin de la partida.
+void avanzar_serpiente(void);
+
+#endif
+```
+
+Lo **nuevo** respecto al Paso 8: `VENENO_DURACION_PASOS` = 25 (5 s a 200 ms por paso), `VENENO_ESPERA_PASOS` = 50 (10 s), `VENENO_SEGMENTOS_PERDIDOS` = 2 y `VENENO_PUNTOS_PERDIDOS` = 2, y el comentario de `Posicion`, que ahora también sirve para el veneno.
+
+`src/snake.c`
+
+```c
+#include "snake.h"
+#include "graficos.h"
+#include "botones.h"
+#include "system_config.h"
+#include "aleatorio.h"
+
+// Cuerpo de la serpiente: arreglo circular. Los segmentos van desde cola hasta cabeza, y son longitud en total.
+static Posicion cuerpo[CAPACIDAD_CUERPO];
+// Índice dentro de cuerpo del segmento de la cabeza (el más nuevo).
+static uint32_t cabeza = 0U;
+// Índice dentro de cuerpo del segmento de la cola (el más viejo, el primero que se apaga al moverse).
+static uint32_t cola = 0U;
+// Cantidad de segmentos de la serpiente. Crece 1 por cada manzana comida y baja 2 por cada veneno comido.
+static uint32_t longitud = 0U;
+// Dirección del último paso hecho: uno de los DIRECCION_*. Empieza en derecha.
+static uint32_t direccion_actual = DIRECCION_DERECHA;
+// Dirección pedida por el último botón de A a D presionado: uno de los DIRECCION_*. Empieza en quieto.
+static uint32_t direccion_pedida = DIRECCION_QUIETO;
+// Vale 0 hasta que se presiona un botón de dirección válido. Mientras vale 0, la serpiente está quieta.
+static uint32_t en_marcha = 0U;
+// Posición de la manzana roja en el tablero.
+static Posicion manzana;
+// Puntos acumulados: sube 1 por cada manzana comida y baja 2 por cada veneno comido (sin bajar de 0).
+static uint32_t puntaje = 0U;
+// Vale 1 cuando la serpiente chocó o llenó el tablero. Al terminar, la serpiente se queda quieta hasta reiniciar.
+static uint32_t juego_terminado = 0U;
+// Posición del veneno azul en el tablero. Solo es válida mientras veneno_visible vale 1.
+static Posicion veneno;
+// Vale 1 mientras el veneno está en el tablero; vale 0 cuando está escondido, esperando a reaparecer.
+static uint32_t veneno_visible = 0U;
+// Pasos del juego que faltan para que el veneno desaparezca (si está visible) o aparezca (si no está visible).
+static uint32_t pasos_veneno = 0U;
+// Vale 1 cuando la manzana tiene una posición válida. Sirve para no comparar con una posición vieja al buscar celda libre.
+static uint32_t manzana_colocada = 0U;
+// Vale 1 después de sembrar el generador aleatorio con el primer botón de dirección. Solo se siembra una vez por arranque.
+static uint32_t aleatorio_sembrado = 0U;
+
+// Devuelve la dirección contraria a la recibida: arriba con abajo, y derecha con izquierda.
+static uint32_t direccion_opuesta(uint32_t direccion)
+{
+    // Si la dirección es arriba, la contraria es abajo.
+    if (direccion == DIRECCION_ARRIBA) {
+        return DIRECCION_ABAJO;
+    }
+    // Si la dirección es abajo, la contraria es arriba.
+    if (direccion == DIRECCION_ABAJO) {
+        return DIRECCION_ARRIBA;
+    }
+    // Si la dirección es derecha, la contraria es izquierda.
+    if (direccion == DIRECCION_DERECHA) {
+        return DIRECCION_IZQUIERDA;
+    }
+    // Si la dirección es izquierda, la contraria es derecha.
+    if (direccion == DIRECCION_IZQUIERDA) {
+        return DIRECCION_DERECHA;
+    }
+    // Sin dirección (quieto) no hay contraria: se devuelve quieto.
+    return DIRECCION_QUIETO;
+}
+
+// Devuelve 1 si algún segmento del cuerpo está en la posición (x, y), y 0 si ninguno está.
+static uint32_t celda_ocupada(uint32_t x, uint32_t y)
+{
+    // Se recorren los segmentos desde la cola: son longitud segmentos en total.
+    for (uint32_t i = 0U; i < longitud; i++) {
+        // Índice real del segmento i dentro del arreglo circular: la vuelta al principio la hace el módulo.
+        uint32_t indice = (cola + i) % CAPACIDAD_CUERPO;
+        // Si el segmento está en la posición buscada, la celda está ocupada.
+        if (cuerpo[indice].x == x && cuerpo[indice].y == y) {
+            return 1U;
+        }
+    }
+    // Ningún segmento está en esa posición: la celda está libre.
+    return 0U;
+}
+
+// Devuelve 1 si la celda (x, y) está libre: sin cuerpo, sin manzana y sin veneno visible. Si no, devuelve 0.
+static uint32_t celda_libre(uint32_t x, uint32_t y)
+{
+    // Si algún segmento del cuerpo está en la celda, no está libre.
+    if (celda_ocupada(x, y) == 1U) {
+        return 0U;
+    }
+    // Si la manzana tiene posición válida y está en la celda, no está libre.
+    if (manzana_colocada == 1U && manzana.x == x && manzana.y == y) {
+        return 0U;
+    }
+    // Si el veneno está visible y está en la celda, no está libre.
+    if (veneno_visible == 1U && veneno.x == x && veneno.y == y) {
+        return 0U;
+    }
+    // Ninguna de las tres cosas está en la celda: está libre.
+    return 1U;
+}
+
+// Busca una celda libre al azar y guarda su posición en *destino. Devuelve 1 si la encontró y 0 si el tablero está lleno.
+// Empieza en una celda que sale del LFSR y, si está ocupada, pasa a la siguiente (circular).
+// Aviso: prueba como máximo CAPACIDAD_CUERPO celdas y cada prueba recorre el cuerpo. Solo tarda mucho si el tablero está casi lleno.
+static uint32_t buscar_celda_libre(Posicion *destino)
+{
+    // Celda de partida: un número aleatorio cortado al tamaño del tablero.
+    uint32_t celda_inicial = siguiente_aleatorio() % CAPACIDAD_CUERPO;
+    // Se prueban todas las celdas del tablero una sola vez, empezando por la celda de partida.
+    for (uint32_t i = 0U; i < CAPACIDAD_CUERPO; i++) {
+        // Celda que se prueba en esta vuelta: si pasa del final del tablero, vuelve al principio.
+        uint32_t celda = (celda_inicial + i) % CAPACIDAD_CUERPO;
+        // Columna x de la celda: el resto de dividir la celda entre el ancho del tablero.
+        uint32_t x = celda % PANEL_ANCHO;
+        // Fila y de la celda: el cociente de dividir la celda entre el ancho del tablero.
+        uint32_t y = celda / PANEL_ANCHO;
+        // Si la celda está libre, se guarda su posición en el destino.
+        if (celda_libre(x, y) == 1U) {
+            destino->x = x;
+            destino->y = y;
+            return 1U;
+        }
+    }
+    // Ninguna celda está libre: el tablero está lleno.
+    return 0U;
+}
+
+// Pone la manzana en una celda libre y la enciende en rojo. Si no hay celda libre, la serpiente llenó el tablero y la partida termina.
+static void colocar_manzana(void)
+{
+    // Si se encontró una celda libre, la manzana va ahí.
+    if (buscar_celda_libre(&manzana) == 1U) {
+        // La manzana ya tiene posición válida.
+        manzana_colocada = 1U;
+        // Se enciende la manzana en rojo.
+        encender_pixel(manzana.x, manzana.y, COLOR_ROJO);
+    } else {
+        // Ninguna celda está libre: la serpiente llena el tablero, así que la partida termina.
+        juego_terminado = 1U;
+    }
+}
+
+// Pone el veneno en una celda libre y lo enciende en azul. Si no hay celda libre, el veneno no aparece esta vez.
+static void colocar_veneno(void)
+{
+    // Si se encontró una celda libre, el veneno va ahí.
+    if (buscar_celda_libre(&veneno) == 1U) {
+        // El veneno está visible durante VENENO_DURACION_PASOS pasos del juego.
+        veneno_visible = 1U;
+        pasos_veneno = VENENO_DURACION_PASOS;
+        // Se enciende el veneno en azul.
+        encender_pixel(veneno.x, veneno.y, COLOR_AZUL);
+    } else {
+        // No hay celda libre: el veneno no aparece y se vuelve a intentar después de VENENO_ESPERA_PASOS pasos.
+        veneno_visible = 0U;
+        pasos_veneno = VENENO_ESPERA_PASOS;
+    }
+}
+
+void iniciar_juego(void)
+{
+    // Se borra la pantalla para quitar lo que quedó de la partida anterior.
+    borrar_pantalla();
+    // La serpiente empieza con LONGITUD_INICIAL segmentos.
+    longitud = LONGITUD_INICIAL;
+    // La cola es el primer segmento del arreglo: índice 0.
+    cola = 0U;
+    // La cabeza es el último de los segmentos iniciales: índice LONGITUD_INICIAL - 1.
+    cabeza = LONGITUD_INICIAL - 1U;
+    // Columna del centro del panel. Los segmentos se ponen a su izquierda y en el centro.
+    uint32_t x = PANEL_ANCHO / 2U;
+    // Fila del centro del panel.
+    uint32_t y = PANEL_ALTO / 2U;
+    // Segmento 0 (cola): dos columnas a la izquierda del centro.
+    cuerpo[0].x = x - 2U;
+    cuerpo[0].y = y;
+    // Segmento 1: una columna a la izquierda del centro.
+    cuerpo[1].x = x - 1U;
+    cuerpo[1].y = y;
+    // Segmento 2 (cabeza): el centro.
+    cuerpo[2].x = x;
+    cuerpo[2].y = y;
+    // Se encienden los tres segmentos en verde.
+    encender_pixel(x - 2U, y, COLOR_VERDE);
+    encender_pixel(x - 1U, y, COLOR_VERDE);
+    encender_pixel(x, y, COLOR_VERDE);
+    // La serpiente mira a la derecha, pero no se mueve hasta que se presione un botón válido.
+    direccion_actual = DIRECCION_DERECHA;
+    // No hay dirección pedida todavía.
+    direccion_pedida = DIRECCION_QUIETO;
+    // La serpiente está quieta hasta el primer botón válido.
+    en_marcha = 0U;
+    // El puntaje vuelve a 0.
+    puntaje = 0U;
+    // La partida está en curso.
+    juego_terminado = 0U;
+    // El veneno no está en el tablero al empezar. Su primera aparición ocurre tras VENENO_ESPERA_PASOS pasos.
+    veneno_visible = 0U;
+    pasos_veneno = VENENO_ESPERA_PASOS;
+    // La manzana todavía no tiene posición válida: así colocar_manzana no compara con la posición de la partida anterior.
+    manzana_colocada = 0U;
+    // Se coloca la primera manzana en una celda libre.
+    colocar_manzana();
+}
+
+void pedir_direccion(uint32_t botones)
+{
+    // Si hay algún botón de A a D presionado y el generador todavía no se sembró, se siembra ahora, una sola vez por arranque.
+    // Se siembra aquí y no al vencer el temporizador: en el instante en que se presiona el botón, los milisegundos son distintos en cada arranque;
+    // al vencer el temporizador siempre serían múltiplos de 200 más una constante.
+    if (((botones & (BOTON_A | BOTON_B | BOTON_C | BOTON_D)) != 0U) && (aleatorio_sembrado == 0U)) {
+        // La semilla son los milisegundos desde el arranque, en el instante de la primera pulsación.
+        sembrar_aleatorio(obtener_milisegundos());
+        // Se marca que ya se sembró para no volver a sembrar en esta partida ni en las siguientes.
+        aleatorio_sembrado = 1U;
+    }
+    // Si el botón A está presionado, la dirección pedida es arriba.
+    if ((botones & BOTON_A) != 0U) {
+        direccion_pedida = DIRECCION_ARRIBA;
+    }
+    // Si el botón B está presionado, la dirección pedida es derecha.
+    if ((botones & BOTON_B) != 0U) {
+        direccion_pedida = DIRECCION_DERECHA;
+    }
+    // Si el botón C está presionado, la dirección pedida es abajo.
+    if ((botones & BOTON_C) != 0U) {
+        direccion_pedida = DIRECCION_ABAJO;
+    }
+    // Si el botón D está presionado, la dirección pedida es izquierda.
+    if ((botones & BOTON_D) != 0U) {
+        direccion_pedida = DIRECCION_IZQUIERDA;
+    }
+}
+
+void avanzar_serpiente(void)
+{
+    // Paso 1: si la partida terminó, no se hace nada: la serpiente queda congelada.
+    if (juego_terminado == 1U) {
+        return;
+    }
+    // Paso 2: si se pidió una dirección que no es la opuesta a la actual, se cambia la dirección.
+    // La opuesta se ignora para que la serpiente no se vuelva sobre sí misma.
+    if (direccion_pedida != DIRECCION_QUIETO && direccion_pedida != direccion_opuesta(direccion_actual)) {
+        // La dirección del último paso pasa a ser la pedida.
+        direccion_actual = direccion_pedida;
+        // Con una dirección válida, la serpiente empieza a moverse.
+        en_marcha = 1U;
+    }
+    // Paso 3: antes del primer botón válido, la serpiente sigue quieta.
+    if (en_marcha == 0U) {
+        return;
+    }
+
+    // Paso 4: se calcula la cabeza nueva, un paso desde la cabeza actual en la dirección actual.
+    // La cabeza actual es el segmento del índice cabeza.
+    uint32_t nueva_x = cuerpo[cabeza].x;
+    uint32_t nueva_y = cuerpo[cabeza].y;
+    // Arriba: y disminuye. Si y ya es 0 (primera fila), la cabeza saldría del tablero y la partida termina.
+    if (direccion_actual == DIRECCION_ARRIBA) {
+        if (nueva_y == 0U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_y = nueva_y - 1U;
+    }
+    // Abajo: y aumenta. Si y ya es la última fila, la partida termina.
+    if (direccion_actual == DIRECCION_ABAJO) {
+        if (nueva_y == PANEL_ALTO - 1U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_y = nueva_y + 1U;
+    }
+    // Izquierda: x disminuye. Si x ya es 0 (primera columna), la partida termina.
+    if (direccion_actual == DIRECCION_IZQUIERDA) {
+        if (nueva_x == 0U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_x = nueva_x - 1U;
+    }
+    // Derecha: x aumenta. Si x ya es la última columna, la partida termina.
+    if (direccion_actual == DIRECCION_DERECHA) {
+        if (nueva_x == PANEL_ANCHO - 1U) {
+            juego_terminado = 1U;
+            return;
+        }
+        nueva_x = nueva_x + 1U;
+    }
+
+    // Paso 5: si la cabeza nueva cae sobre el cuerpo, la partida termina. Esto incluye la cola,
+    // porque la cola todavía no se movió en este paso.
+    if (celda_ocupada(nueva_x, nueva_y) == 1U) {
+        juego_terminado = 1U;
+        return;
+    }
+
+    // Paso 5b: se mira si la cabeza nueva cae sobre el veneno visible. Se calcula antes de mover la cabeza.
+    uint32_t come_veneno = (veneno_visible == 1U && nueva_x == veneno.x && nueva_y == veneno.y);
+    // Si se come veneno con VENENO_SEGMENTOS_PERDIDOS segmentos o menos, la serpiente muere: la partida termina y la serpiente no se mueve.
+    if (come_veneno == 1U && longitud <= VENENO_SEGMENTOS_PERDIDOS) {
+        juego_terminado = 1U;
+        return;
+    }
+
+    // Paso 6: la cabeza avanza una posición en el arreglo circular y guarda la posición nueva.
+    cabeza = (cabeza + 1U) % CAPACIDAD_CUERPO;
+    cuerpo[cabeza].x = nueva_x;
+    cuerpo[cabeza].y = nueva_y;
+    // Se enciende el píxel de la nueva cabeza en verde.
+    encender_pixel(nueva_x, nueva_y, COLOR_VERDE);
+
+    // Paso 7: si la cabeza llegó a la manzana, la serpiente crece: la cola no se mueve, suma 1 segmento
+    // y 1 punto, y aparece otra manzana.
+    if (nueva_x == manzana.x && nueva_y == manzana.y) {
+        // Un segmento más.
+        longitud++;
+        // Un punto más.
+        puntaje++;
+        // Nueva manzana en una celda libre.
+        colocar_manzana();
+    } else {
+        // Si no hubo manzana, la cola se mueve: se apaga el píxel de la cola en negro para que no quede un segmento viejo.
+        encender_pixel(cuerpo[cola].x, cuerpo[cola].y, COLOR_NEGRO);
+        // El índice de la cola avanza una posición en el arreglo circular.
+        cola = (cola + 1U) % CAPACIDAD_CUERPO;
+        // Si además se comió veneno, la serpiente pierde VENENO_SEGMENTOS_PERDIDOS segmentos más desde la cola.
+        if (come_veneno == 1U) {
+            // Cada segmento perdido: se apaga su píxel, la cola avanza y la longitud baja 1.
+            for (uint32_t i = 0U; i < VENENO_SEGMENTOS_PERDIDOS; i++) {
+                encender_pixel(cuerpo[cola].x, cuerpo[cola].y, COLOR_NEGRO);
+                cola = (cola + 1U) % CAPACIDAD_CUERPO;
+                longitud--;
+            }
+            // El puntaje baja VENENO_PUNTOS_PERDIDOS, pero nunca por debajo de 0.
+            if (puntaje >= VENENO_PUNTOS_PERDIDOS) {
+                puntaje = puntaje - VENENO_PUNTOS_PERDIDOS;
+            } else {
+                puntaje = 0U;
+            }
+            // El veneno se consume: deja de estar visible y empieza la espera para reaparecer.
+            // Su píxel queda cubierto por la cabeza verde, así que no hace falta apagarlo.
+            veneno_visible = 0U;
+            pasos_veneno = VENENO_ESPERA_PASOS;
+        }
+    }
+
+    // Paso 8: el tiempo del veneno avanza un paso. Solo si la partida sigue y en este paso no se comió veneno.
+    if (juego_terminado == 0U && come_veneno == 0U) {
+        // El contador no baja de 0: solo se resta si todavía vale más de 0.
+        if (pasos_veneno > 0U) {
+            pasos_veneno--;
+        }
+        // Si el contador llegó a 0, toca cambiar el estado del veneno.
+        if (pasos_veneno == 0U) {
+            // Si el veneno estaba visible, desaparece: se apaga su píxel y empieza la espera para reaparecer.
+            if (veneno_visible == 1U) {
+                encender_pixel(veneno.x, veneno.y, COLOR_NEGRO);
+                veneno_visible = 0U;
+                pasos_veneno = VENENO_ESPERA_PASOS;
+            } else {
+                // Si el veneno estaba escondido, reaparece en una celda libre.
+                colocar_veneno();
+            }
+        }
+    }
+}
+```
+
+**Variables nuevas** (todas `static` y sin `volatile`, porque ninguna interrupción las toca):
+- `veneno`: su posición, válida solo mientras `veneno_visible` vale 1.
+- `veneno_visible`: 1 si está en el tablero, 0 si está escondido esperando.
+- `pasos_veneno`: pasos que faltan para que desaparezca (si está visible) o aparezca (si no).
+- `manzana_colocada`: 1 si la manzana tiene una posición válida. Evita comparar con una posición vieja al buscar celda libre.
+- `aleatorio_sembrado`: 1 después de sembrar.
+
+**Funciones nuevas:**
+- **`celda_libre(x, y)`:** devuelve 1 si no hay cuerpo, ni manzana (si `manzana_colocada`), ni veneno (si `veneno_visible`) en esa celda.
+- **`buscar_celda_libre(Posicion *destino)`:** parte de `siguiente_aleatorio() % CAPACIDAD_CUERPO` y prueba esa celda y las siguientes (dando la vuelta con el módulo) hasta encontrar una libre; si la encuentra, escribe `x` e `y` en `*destino` y devuelve 1; si no, devuelve 0. El puntero apunta a datos, no a funciones.
+- **`colocar_manzana`:** usa la anterior. Si no hay celda libre, el tablero está lleno y el juego termina.
+- **`colocar_veneno`:** igual, pero si no hay celda libre, el veneno no aparece y espera 50 pasos otra vez.
+
+**`iniciar_juego`:** además de lo del Paso 8, deja el veneno escondido con 50 pasos de espera y pone `manzana_colocada` en 0 antes de colocar la manzana. No reinicia el LFSR ni `aleatorio_sembrado`.
+
+**`pedir_direccion`:** si hay algún botón de A a D presionado y el generador todavía no se sembró, llama a `sembrar_aleatorio(obtener_milisegundos())` y marca `aleatorio_sembrado`. Después, los cuatro `if` de siempre.
+
+**`avanzar_serpiente`** (pasos nuevos o cambiados):
+- **Paso 5b:** `come_veneno` vale 1 si el veneno es visible y la cabeza nueva está en su celda. Si además `longitud <= 2`, el juego termina y la serpiente no se mueve.
+- **Paso 7, manzana:** igual que en el Paso 8 (la cola no se mueve, sube la longitud y el puntaje, aparece otra manzana).
+- **Paso 7, veneno:** primero se mueve la cola como siempre (se apaga un píxel). Después, un `for` de 2 vueltas apaga 2 píxeles más de la cola, avanza `cola` y baja `longitud`. Con 3 segmentos, la cabeza nueva queda sola (longitud 1). El puntaje baja 2 sin bajar de 0 (`if (puntaje >= 2)`). El veneno desaparece y vuelve a esperar 50 pasos; su píxel azul queda cubierto por la cabeza verde.
+- **Paso 8, el reloj del veneno:** al final de cada paso, si el juego sigue y no se comió veneno, el contador baja 1 (nunca por debajo de 0). Al llegar a 0: si el veneno estaba visible, se apaga y vuelve a esperar 50 pasos; si estaba escondido, `colocar_veneno()` lo pone y fija 25 pasos. El contador solo baja cuando la serpiente avanza: **E lo pausa y morir lo congela**. Por eso el tiempo se cuenta en pasos del juego y no con un segundo temporizador.
+
+`inc/system_config.h`
+
+```c
+#ifndef SYSTEM_CONFIG_H
+#define SYSTEM_CONFIG_H
+
+#include "registros_f446.h"
+
+// Frecuencia del reloj del sistema (SYSCLK y HCLK) después de configurar_reloj: 84 MHz.
+#define FRECUENCIA_RELOJ_HZ 84000000U
+// Interrupciones de SysTick por segundo: 1000 = una interrupción por milisegundo (base de tiempo de 1 ms).
+#define INTERRUPCIONES_SYSTICK_POR_SEGUNDO 1000U
+
+// Configura el PLL a 84 MHz, la latencia de la FLASH y los divisores de los buses. Se llama antes que cualquier periférico.
+void configurar_reloj(void);
+// Enciende SysTick para que interrumpa cada 1 ms (base de tiempo).
+void iniciar_systick(void);
+// Espera la cantidad de milisegundos indicada. Mientras espera, la interrupción de SysTick sigue contando.
+void esperar_milisegundos(uint32_t milisegundos);
+// Devuelve los milisegundos desde el arranque. Sirve como semilla del generador aleatorio (el LFSR de aleatorio.c), que se siembra una vez con el primer botón de dirección.
+uint32_t obtener_milisegundos(void);
+// Deja el temporizador de movimiento contando desde 0 y con el periodo indicado, en milisegundos.
+void iniciar_temporizador_movimiento(uint32_t periodo_ms);
+// Devuelve 1 y baja la bandera si el temporizador de movimiento venció desde la última consulta; devuelve 0 si no.
+uint32_t temporizador_movimiento_vencio(void);
+
+#endif
+```
+
+Solo cambió el comentario de `obtener_milisegundos`: ya no es la semilla de la posición de la manzana, sino del generador aleatorio.
+
+### Lo que el `revisor` comprobó por simulación
+- Un programa de PC con copias exactas de `aleatorio.c` y `snake.c`, un framebuffer simulado y un modelo de referencia aparte. En cada paso exigió que el framebuffer fuera exactamente el cuerpo en verde, la manzana en rojo y el veneno visible en azul, sin píxeles de más ni de menos, que manzana y veneno nunca coincidieran ni con el cuerpo ni salieran del tablero, y que cabeza, cola, longitud, puntaje y contador del veneno coincidieran con el modelo.
+- Tableros: 32×16 (23 000 partidas, ~4,5 millones de pasos), 32×32 (9 000 partidas, ~2,6 millones), 4×3, 5×4 y 6×4 (400 000 partidas cada uno, entre 4,5 y 8,8 millones de pasos). En total, unos 30 millones de pasos con 0 fallos. En tableros pequeños, con espera y duración del veneno de 4 y 5 pasos, hubo más de 450 000 venenos comidos.
+- Casos dirigidos: el veneno aparece en el paso 50, desaparece en el 75 y reaparece en el 125; con la serpiente quieta, en pausa o muerta el contador no avanza; comer veneno con longitud 3, 4 y 10 y puntajes 0, 1, 2 y 5; con longitud 1 y 2 muere sin moverse; la manzana nueva nunca cae sobre el veneno; tablero casi lleno (el veneno no aparece y la manzana termina la partida); F reinicia el ciclo del veneno sin resembrar; y la siembra ocurre una sola vez y solo con A, B, C o D.
+- Limitación: es una simulación en x86; no ejercita el hardware.
+
+### Límites conocidos (no son errores)
+- **Primera manzana fija al arrancar** (decisión de Daniela): siempre sale en `(1, 0)` hasta que se siembra el LFSR. Después de F, la manzana de la partida nueva es aleatoria porque el LFSR ya está sembrado.
+- **F mantenida:** `iniciar_juego` se ejecuta en cada vuelta del bucle y cada vez consume un número del LFSR, así que la manzana de la partida nueva depende de cuánto tiempo se mantuvo F.
+- **Veneno en la última celda libre:** si el veneno ocupa la última celda libre y se come una manzana, la partida termina como «tablero lleno». Caso extremo; Daniela decidió ignorarlo por ahora.
+- **Comparación con la manzana** (`nueva_x == manzana.x && ...`) sin revisar `manzana_colocada`: los casos en que `manzana` queda vieja terminan la partida antes de comparar. Se deja.
+- **Costo de `buscar_celda_libre`** con el tablero casi lleno (estimado, no medido): ~90 ms en 32×16 y ~0,35 s en 32×32. Las interrupciones de TIM3 y SysTick siguen corriendo; lo único que se bloquea es la lectura de botones, y solo en ese caso extremo.
+
+### Modificaciones y correcciones
+- La posición de la manzana ya no sale de `obtener_milisegundos()`: `colocar_manzana` usa `buscar_celda_libre` y el LFSR.
+- El `revisor` cambió tres comentarios (el de `obtener_milisegundos` en `system_config.h`, el de `longitud` en `snake.c` y el de `Posicion` en `snake.h`) que habían quedado desactualizados.
+- Se restauró `main.c` desde el commit del Paso 8 con `git restore main.c` por decisión de Daniela: la copia de trabajo tenía el código del punto del Paso 7.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Duración del veneno en pantalla | 3, 5 u 8 s | 5 s (25 pasos) |
+| Cada cuánto reaparece | 5, 10 o 15 s | 10 s (50 pasos) |
+| Puntaje menor que 2 al comer veneno | Queda en 0, puede ser negativo o mata | Queda en 0 |
+| Serpiente con 2 segmentos o menos | Muere, queda en 1 o el veneno no aparece | Muere |
+| Cómo contar el tiempo del veneno | En pasos del juego o con un segundo temporizador | En pasos del juego |
+| LFSR y semilla | 16 o 32 bits; milisegundos o contador de TIM3 | 16 bits, sembrado con los milisegundos de la primera pulsación |
+| Primera manzana | Fija, moverla al sembrar o esperar al primer botón | Fija |
+| `main.c` con el código del punto | Restaurar el del commit o conservarlo | Restaurar el del commit |
+| Comparar con la manzana sin `manzana_colocada` | Dejarlo o agregar la condición | Dejarlo |
+| Veneno en la última celda libre | Dejarlo o hacer que desaparezca | Ignorarlo por ahora |
+| Primera manzana tras F | Aleatoria (el LFSR ya sembrado) o fija con el LFSR reiniciado | Aleatoria |
+
+Fijados por el agente principal con la especificación (Daniela puede objetarlos): el LFSR en `aleatorio.h/.c`, 16 desplazamientos por llamada, siembra en `pedir_direccion`, la regla de muerte evaluada antes de mover la cabeza, y que la manzana y el veneno no se superponen.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 4830`, `data 8`, `bss 1608`.
+- Simulación del `revisor` (ver arriba): unos 30 millones de pasos, 0 fallos.
+- `make flash`: voltaje 3,258 V, `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa (2026-11-17): Daniela observó que, al oprimir el botón de reinicio (F), la primera manzana cambia de posición, lo cual es el comportamiento esperado (el LFSR ya está sembrado), y decidió dejarlo así. No se detalló prueba por prueba (aparición y desaparición del veneno, pérdida de segmentos, muerte con 2 segmentos o menos).
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación.
+- Al empezar el paso, la copia de trabajo de `main.c` tenía el código del Paso 7 (el punto verde) en vez del juego del Paso 8, aunque el commit tenía el juego. Se restauró con `git restore main.c` antes de programar, con permiso de Daniela.
+
+### Preguntas de autoevaluación
+1. ¿Por qué un LFSR nunca puede valer 0 y qué se hace con una semilla que da 0?
+   Porque el bit nuevo es un XOR de bits del propio estado: con todos en 0, el bit nuevo es 0 y el estado se queda en 0 para siempre. Por eso empieza en 1 y una semilla que quede en 0 se reemplaza por 1.
+2. ¿Por qué el LFSR se siembra en `pedir_direccion` con los milisegundos y no cuando vence el temporizador de 200 ms?
+   Porque el instante en que se presiona un botón cambia en cada arranque. Al vencer el temporizador, los milisegundos siempre son múltiplos de 200 más una constante, y las manzanas saldrían en pocas columnas (el problema del Paso 8).
+3. ¿Por qué `siguiente_aleatorio` hace 16 desplazamientos por llamada?
+   Con un solo desplazamiento, cada número es el anterior corrido un bit, y las posiciones consecutivas (manzana y veneno) quedarían muy relacionadas. Con 16 desplazamientos, los 16 bits del resultado son nuevos.
+4. Una serpiente de 3 segmentos y 1 punto come veneno: ¿cuánto quedan la longitud y el puntaje? ¿Y si tuviera 2 segmentos?
+   Con 3 segmentos: la cola avanza 1 (paso normal) y pierde 2 más, así que la longitud queda en 1, y el puntaje baja 2 pero no baja de 0: queda en 0. Con 2 segmentos (o menos) muere sin moverse.
+5. ¿Por qué el tiempo del veneno se cuenta en pasos del juego y no con un segundo temporizador?
+   Porque así se pausa con E y se congela al morir (el contador solo baja cuando la serpiente avanza), y no hace falta otro temporizador de software.
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
