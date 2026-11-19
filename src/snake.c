@@ -22,7 +22,7 @@ static uint32_t en_marcha = 0U;
 static Posicion manzana;
 // Puntos acumulados: sube 1 por cada manzana comida y baja 2 por cada veneno comido (sin bajar de 0).
 static uint32_t puntaje = 0U;
-// Vale 1 cuando la serpiente chocó o llenó el tablero. Al terminar, la serpiente se queda quieta hasta reiniciar.
+// Vale 1 cuando la serpiente chocó o llenó el tablero. Lo pone terminar_partida, que además muestra el puntaje. Al terminar, la serpiente se queda quieta hasta reiniciar.
 static uint32_t juego_terminado = 0U;
 // Posición del veneno azul en el tablero. Solo es válida mientras veneno_visible vale 1.
 static Posicion veneno;
@@ -119,6 +119,17 @@ static uint32_t buscar_celda_libre(Posicion *destino)
     return 0U;
 }
 
+// Termina la partida: marca juego_terminado, borra el tablero y muestra el puntaje en blanco, centrado en el panel.
+static void terminar_partida(void)
+{
+    // Marca la partida como terminada: a partir de aquí avanzar_serpiente no mueve la serpiente.
+    juego_terminado = 1U;
+    // Borra todo el tablero para que solo quede el puntaje.
+    borrar_pantalla();
+    // Dibuja el puntaje centrado en blanco: la esquina izquierda va en (ancho del panel - ancho del número) / 2 y la superior en (alto del panel - alto de la fuente) / 2.
+    dibujar_numero((PANEL_ANCHO - NUMERO_ANCHO) / 2U, (PANEL_ALTO - FUENTE_ALTO) / 2U, puntaje, COLOR_BLANCO);
+}
+
 // Pone la manzana en una celda libre y la enciende en rojo. Si no hay celda libre, la serpiente llenó el tablero y la partida termina.
 static void colocar_manzana(void)
 {
@@ -129,8 +140,8 @@ static void colocar_manzana(void)
         // Se enciende la manzana en rojo.
         encender_pixel(manzana.x, manzana.y, COLOR_ROJO);
     } else {
-        // Ninguna celda está libre: la serpiente llena el tablero, así que la partida termina.
-        juego_terminado = 1U;
+        // Ninguna celda está libre: la serpiente llena el tablero, así que la partida termina y se muestra el puntaje.
+        terminar_partida();
     }
 }
 
@@ -252,7 +263,7 @@ void avanzar_serpiente(void)
     // Arriba: y disminuye. Si y ya es 0 (primera fila), la cabeza saldría del tablero y la partida termina.
     if (direccion_actual == DIRECCION_ARRIBA) {
         if (nueva_y == 0U) {
-            juego_terminado = 1U;
+            terminar_partida();
             return;
         }
         nueva_y = nueva_y - 1U;
@@ -260,7 +271,7 @@ void avanzar_serpiente(void)
     // Abajo: y aumenta. Si y ya es la última fila, la partida termina.
     if (direccion_actual == DIRECCION_ABAJO) {
         if (nueva_y == PANEL_ALTO - 1U) {
-            juego_terminado = 1U;
+            terminar_partida();
             return;
         }
         nueva_y = nueva_y + 1U;
@@ -268,7 +279,7 @@ void avanzar_serpiente(void)
     // Izquierda: x disminuye. Si x ya es 0 (primera columna), la partida termina.
     if (direccion_actual == DIRECCION_IZQUIERDA) {
         if (nueva_x == 0U) {
-            juego_terminado = 1U;
+            terminar_partida();
             return;
         }
         nueva_x = nueva_x - 1U;
@@ -276,7 +287,7 @@ void avanzar_serpiente(void)
     // Derecha: x aumenta. Si x ya es la última columna, la partida termina.
     if (direccion_actual == DIRECCION_DERECHA) {
         if (nueva_x == PANEL_ANCHO - 1U) {
-            juego_terminado = 1U;
+            terminar_partida();
             return;
         }
         nueva_x = nueva_x + 1U;
@@ -285,7 +296,7 @@ void avanzar_serpiente(void)
     // Paso 5: si la cabeza nueva cae sobre el cuerpo, la partida termina. Esto incluye la cola,
     // porque la cola todavía no se movió en este paso.
     if (celda_ocupada(nueva_x, nueva_y) == 1U) {
-        juego_terminado = 1U;
+        terminar_partida();
         return;
     }
 
@@ -293,7 +304,7 @@ void avanzar_serpiente(void)
     uint32_t come_veneno = (veneno_visible == 1U && nueva_x == veneno.x && nueva_y == veneno.y);
     // Si se come veneno con VENENO_SEGMENTOS_PERDIDOS segmentos o menos, la serpiente muere: la partida termina y la serpiente no se mueve.
     if (come_veneno == 1U && longitud <= VENENO_SEGMENTOS_PERDIDOS) {
-        juego_terminado = 1U;
+        terminar_partida();
         return;
     }
 

@@ -85,3 +85,17 @@ void dibujar_digito(uint32_t x, uint32_t y, uint32_t digito, uint32_t color)
         }
     }
 }
+
+// Dibuja un número con NUMERO_CANTIDAD_DIGITOS dígitos, con la esquina superior izquierda en (x, y). Los ceros a la izquierda se dibujan.
+void dibujar_numero(uint32_t x, uint32_t y, uint32_t valor, uint32_t color)
+{
+    // Recorre las posiciones de los dígitos de derecha a izquierda: la posición 4 es la de unidades y la posición 1 la de millares.
+    for (uint32_t posicion = NUMERO_CANTIDAD_DIGITOS; posicion > 0U; posicion--) {
+        // Dígito de esta posición: el resto de dividir el valor entre 10 (el último dígito que queda).
+        uint32_t digito = valor % 10U;
+        // Quita el último dígito del valor para que el siguiente paso tome el anterior.
+        valor = valor / 10U;
+        // Dibuja el dígito en su columna: el desplazamiento es (posicion - 1) veces el ancho de un dígito más la separación. Las unidades (posicion 4) quedan a la derecha, con desplazamiento 3 * 4 = 12.
+        dibujar_digito(x + (posicion - 1U) * (FUENTE_ANCHO + FUENTE_SEPARACION), y, digito, color);
+    }
+}

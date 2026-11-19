@@ -16,6 +16,7 @@ Documento para que Daniela y su compañero estudien para la sustentación. Lo ma
 - [Paso 7 — Mover un punto con los botones](#paso-7--mover-un-punto-con-los-botones)
 - [Paso 8 — Snake básico (primer avance para el profesor)](#paso-8--snake-básico-primer-avance-para-el-profesor)
 - [Paso 9 — Números aleatorios (LFSR) y veneno azul](#paso-9--números-aleatorios-lfsr-y-veneno-azul)
+- [Paso 10 — Puntaje y fin de juego](#paso-10--puntaje-y-fin-de-juego)
 - Los pasos siguientes se agregan aquí a medida que se hacen (ver `PLAN.md`).
 - [Resumen de sustentación](#resumen-de-sustentación)
 
@@ -120,6 +121,10 @@ Cada término se define la primera vez que aparece, en una frase.
 | Periodo del LFSR | Cantidad de valores distintos antes de repetirse; con estos taps son 65 535 (todos los de 16 bits menos el 0). |
 | Veneno (paso del juego) | El veneno azul cuenta su tiempo en pasos del juego (cada paso de la serpiente), no en milisegundos; así se pausa con E y se congela al morir. |
 | Desbordamiento (vuelta) de un contador | Al pasar el máximo (`0xFFFFFFFF`) un entero sin signo vuelve a 0; la resta sin signo sigue dando la diferencia correcta. |
+| Ceros a la izquierda | Ceros que se escriben delante de un número para que tenga siempre la misma cantidad de dígitos (`42` se dibuja como `0042`). |
+| Separar dígitos con `/` y `%` | `valor % 10` da el último dígito y `valor / 10` (división entera) lo descarta; repetido, saca todos los dígitos de derecha a izquierda. |
+| Centrar un dibujo | Poner su esquina superior izquierda en (ancho del panel − ancho del dibujo) / 2 y (alto del panel − alto del dibujo) / 2; la división entera redondea hacia abajo. |
+| Pantalla de fin de juego | Lo que `terminar_partida` deja en el panel al terminar la partida: todo borrado y solo el puntaje en blanco. |
 
 ## Plantilla de sección de paso
 Cada paso nuevo copia esta estructura:
@@ -3633,6 +3638,7 @@ Tener funciones para dibujar sobre el framebuffer sin tocar el hardware: borrar 
 - `main.c` (reescrito): las dos pantallas de prueba. Las pruebas del Paso 5 (`rellenar_parcial`, `dibujar_marco`, `dibujar_diagonales`) y `limpiar_pantalla` se eliminan de `main.c`; quedan en la guía del Paso 5.
 - `src/panel.c` no cambia: «poner un píxel con 7 colores» es `encender_pixel`, que ya aceptaba cualquier valor de 3 bits.
 - El Paso 7 reescribe `main.c`: el que aparece en esta sección es la **versión del Paso 6**.
+- El Paso 10 agrega a `graficos.h` y `graficos.c` tres constantes y `dibujar_numero`: los que aparecen en esta sección son las **versiones del Paso 6**.
 
 ### Concepto de clase que se usa
 Arreglos constantes en FLASH (`const`, `.rodata`), operaciones de bits (desplazar y enmascarar) y capas de software: `panel.c` maneja el hardware y el framebuffer, y `graficos.c` solo dibuja sobre el framebuffer a través de `encender_pixel`.
@@ -5217,6 +5223,7 @@ Reemplazar el cálculo de la posición de la manzana con milisegundos (que la de
 - `inc/snake.h` y `src/snake.c` (modificados): el veneno, la búsqueda de celdas libres con el LFSR y la siembra en `pedir_direccion`.
 - `inc/system_config.h` (modificado): solo el comentario de `obtener_milisegundos`.
 - `main.c` no cambia (se restauró desde el commit del Paso 8, porque la copia de trabajo tenía el código del punto del Paso 7).
+- El Paso 10 cambia después `snake.c` (agrega `terminar_partida`): el que aparece en esta sección es la **versión del Paso 9**.
 
 ### Concepto de clase que se usa
 Generadores pseudoaleatorios con registros de desplazamiento y realimentación (LFSR), operaciones de bits (XOR, desplazamientos) y máquinas de estado simples (veneno escondido o visible con un contador de pasos).
@@ -5837,6 +5844,644 @@ Fijados por el agente principal con la especificación (Daniela puede objetarlos
    Con 3 segmentos: la cola avanza 1 (paso normal) y pierde 2 más, así que la longitud queda en 1, y el puntaje baja 2 pero no baja de 0: queda en 0. Con 2 segmentos (o menos) muere sin moverse.
 5. ¿Por qué el tiempo del veneno se cuenta en pasos del juego y no con un segundo temporizador?
    Porque así se pausa con E y se congela al morir (el contador solo baja cuando la serpiente avanza), y no hace falta otro temporizador de software.
+
+## Paso 10 — Puntaje y fin de juego
+
+### Objetivo
+Mostrar el puntaje al terminar la partida. Cuando la serpiente choca (con una pared o con su cuerpo), come veneno con 2 segmentos o menos, o llena el tablero, el panel se borra y aparece solo el puntaje en blanco, con 4 dígitos (ceros a la izquierda) y centrado. F reinicia la partida al instante, como antes.
+
+Con este paso el juego completo funciona en **un solo panel de 32×16**: es el hito del plan para comprar el segundo panel.
+
+### Archivos creados o modificados
+- `inc/graficos.h` y `src/graficos.c` (modificados): tres constantes nuevas y la función `dibujar_numero`, que usa `dibujar_digito`.
+- `src/snake.c` (modificado): la función `terminar_partida` y su uso en los 7 sitios donde antes se escribía `juego_terminado = 1U;`.
+- `inc/snake.h` y `main.c` no cambian.
+- Este paso cambia `graficos.h`, `graficos.c` y `snake.c` respecto a los pasos 6 y 9: los que aparecen en esas secciones son las **versiones de sus pasos**; el código de esta sección es el vigente.
+
+### Concepto de clase que se usa
+Aritmética entera con `/` y `%` para separar dígitos, constantes con `#define` para que el tamaño del tablero y de la fuente se calculen en un solo lugar, funciones `static` que reúnen una acción repetida, y reutilización de la capa gráfica (`dibujar_numero` usa `dibujar_digito`, que usa `encender_pixel`).
+
+**Cómo se hizo:** el agente principal resolvió con Daniela las decisiones (ver más abajo); el subagente `programador` (Haiku) escribió el código; el subagente `revisor` (Sonnet) lo revisó, simuló los valores 0, 7, 42, 509 y 12345 en un programa de PC y no cambió nada; el agente principal leyó el `git diff`, recompiló y grabó la placa.
+
+**Fuentes:** no hay datos del RM0390 en este paso. Las decisiones son de Daniela.
+
+### Cómo se dibuja un número de 4 dígitos
+Para escribir el número 42 como `0042`, la función saca los dígitos de derecha a izquierda con dos operaciones:
+
+| Vuelta | `posicion` | `valor` al empezar | `valor % 10` (dígito) | `valor / 10` (queda) | Columna del dígito (x = 8) |
+|---|---|---|---|---|---|
+| 1 | 4 (unidades) | 42 | 2 | 4 | 8 + 3·4 = 20 |
+| 2 | 3 (decenas) | 4 | 4 | 0 | 8 + 2·4 = 16 |
+| 3 | 2 (centenas) | 0 | 0 | 0 | 8 + 1·4 = 12 |
+| 4 | 1 (millares) | 0 | 0 | 0 | 8 + 0·4 = 8 |
+
+- Los **ceros a la izquierda salen solos**: cuando `valor` llega a 0, `0 % 10` es 0 y se dibuja un «0».
+- Cada dígito mide 3 columnas y se deja 1 de separación, así que cada posición se corre 4 columnas.
+- El ancho total es 4·3 + 3·1 = **15 columnas**: entre 4 dígitos hay 3 huecos, no 4.
+- **Centrado:** x = (32 − 15) / 2 = 8 (la división entera redondea 8,5 hacia abajo) e y = (16 − 5) / 2 = 5. El número ocupa las columnas 8 a 22 y las filas 5 a 9.
+- Si el valor pasa de 9999, solo se muestran los últimos 4 dígitos (12345 se vería «2345»). En 32×16 el puntaje máximo es de unos 509 y en 32×32 de unos 1021, así que nunca ocurre.
+
+### Código explicado
+
+`inc/graficos.h`
+
+```c
+#ifndef GRAFICOS_H
+#define GRAFICOS_H
+
+#include "panel.h"
+
+// Ancho de un dígito de la fuente en columnas (3 bits por fila).
+#define FUENTE_ANCHO 3U
+// Alto de un dígito de la fuente en filas (5 filas por dígito).
+#define FUENTE_ALTO 5U
+// Cantidad de dígitos de la fuente (los dígitos 0 a 9).
+#define FUENTE_CANTIDAD_DIGITOS 10U
+// Columnas vacías entre dos dígitos al dibujar un número.
+#define FUENTE_SEPARACION 1U
+// Cantidad de dígitos que dibuja dibujar_numero: siempre 4, con ceros a la izquierda.
+#define NUMERO_CANTIDAD_DIGITOS 4U
+// Ancho total en columnas de un número de NUMERO_CANTIDAD_DIGITOS dígitos: los dígitos más las separaciones entre ellos.
+#define NUMERO_ANCHO (NUMERO_CANTIDAD_DIGITOS * FUENTE_ANCHO + (NUMERO_CANTIDAD_DIGITOS - 1U) * FUENTE_SEPARACION)
+
+// Pone en negro todos los píxeles del tablero.
+void borrar_pantalla(void);
+// Dibuja solo el contorno de un rectángulo de ancho por alto píxeles. (x, y) es la esquina superior izquierda.
+void dibujar_rectangulo(uint32_t x, uint32_t y, uint32_t ancho, uint32_t alto, uint32_t color);
+// Dibuja el dígito (0 a 9) de 3x5 con la esquina superior izquierda en (x, y). Solo enciende los píxeles del dígito; los demás no se tocan.
+void dibujar_digito(uint32_t x, uint32_t y, uint32_t digito, uint32_t color);
+// Dibuja el número con la esquina superior izquierda en (x, y), con NUMERO_CANTIDAD_DIGITOS dígitos y ceros a la izquierda. Si valor es mayor que 9999, muestra solo sus últimos 4 dígitos. No borra lo que haya debajo.
+void dibujar_numero(uint32_t x, uint32_t y, uint32_t valor, uint32_t color);
+
+#endif
+```
+
+Lo que cambió respecto al Paso 6 (el resto se explica en la sección del Paso 6):
+- `#define FUENTE_SEPARACION 1U`: columnas vacías entre dos dígitos. Sin ellas, los dígitos quedarían pegados y se confundirían.
+- `#define NUMERO_CANTIDAD_DIGITOS 4U`: cuántos dígitos dibuja `dibujar_numero`. Son 4 por decisión de Daniela, para que quepa un puntaje de 32×32.
+- `#define NUMERO_ANCHO (...)`: ancho total del número, `4 * 3 + (4 - 1) * 1 = 15`. Los paréntesis externos evitan errores de precedencia si la constante se usa dentro de otra cuenta, como en `(PANEL_ANCHO - NUMERO_ANCHO) / 2U`.
+- `void dibujar_numero(...)`: la declaración. Va en el `.h` para que `snake.c` pueda llamarla.
+
+`src/graficos.c`
+
+```c
+#include "graficos.h"
+
+// Fuente propia de 3x5 para los dígitos 0 a 9. Cada dígito son 5 bytes, uno por fila, de arriba abajo.
+// Solo se usan los bits 0 a 2 de cada byte: el bit 2 es la columna izquierda y el bit 0 la columna derecha.
+// Se escribe en binario con literales 0b... (extensión de GCC, que acepta arm-none-eabi-gcc).
+// Es const, así que el arreglo va en FLASH (.rodata) y no ocupa RAM.
+static const uint8_t fuente_digitos[FUENTE_CANTIDAD_DIGITOS][FUENTE_ALTO] = {
+    // Dígito 0: 111 101 101 101 111.
+    { 0b111, 0b101, 0b101, 0b101, 0b111 },
+    // Dígito 1: 010 110 010 010 111.
+    { 0b010, 0b110, 0b010, 0b010, 0b111 },
+    // Dígito 2: 111 001 111 100 111.
+    { 0b111, 0b001, 0b111, 0b100, 0b111 },
+    // Dígito 3: 111 001 111 001 111.
+    { 0b111, 0b001, 0b111, 0b001, 0b111 },
+    // Dígito 4: 101 101 111 001 001.
+    { 0b101, 0b101, 0b111, 0b001, 0b001 },
+    // Dígito 5: 111 100 111 001 111.
+    { 0b111, 0b100, 0b111, 0b001, 0b111 },
+    // Dígito 6: 111 100 111 101 111.
+    { 0b111, 0b100, 0b111, 0b101, 0b111 },
+    // Dígito 7: 111 001 001 001 001.
+    { 0b111, 0b001, 0b001, 0b001, 0b001 },
+    // Dígito 8: 111 101 111 101 111.
+    { 0b111, 0b101, 0b111, 0b101, 0b111 },
+    // Dígito 9: 111 101 111 001 111.
+    { 0b111, 0b101, 0b111, 0b001, 0b111 },
+};
+
+// Pone en negro todos los píxeles del tablero.
+void borrar_pantalla(void)
+{
+    // Recorre todas las filas del tablero.
+    for (uint32_t y = 0U; y < PANEL_ALTO; y++) {
+        // Recorre todas las columnas de la fila.
+        for (uint32_t x = 0U; x < PANEL_ANCHO; x++) {
+            // Pone el píxel (x, y) en negro.
+            encender_pixel(x, y, COLOR_NEGRO);
+        }
+    }
+}
+
+// Dibuja el contorno de un rectángulo: la fila de arriba, la de abajo, la columna izquierda y la derecha.
+// Si el ancho o el alto son 0, no se dibuja nada: con alto = 0, alto - 1U daría una vuelta de uint32_t (0xFFFFFFFF).
+void dibujar_rectangulo(uint32_t x, uint32_t y, uint32_t ancho, uint32_t alto, uint32_t color)
+{
+    // Ancho o alto en 0: no hay rectángulo que dibujar, se sale sin tocar el tablero.
+    if (ancho == 0U || alto == 0U) {
+        return;
+    }
+    // Recorre las columnas del rectángulo (de x hasta x + ancho - 1) para pintar la fila de arriba y la de abajo.
+    for (uint32_t columna = x; columna < x + ancho; columna++) {
+        // Fila de arriba del rectángulo.
+        encender_pixel(columna, y, color);
+        // Fila de abajo del rectángulo (y + alto - 1).
+        encender_pixel(columna, y + alto - 1U, color);
+    }
+    // Recorre las filas del rectángulo (de y hasta y + alto - 1) para pintar la columna izquierda y la derecha.
+    for (uint32_t fila = y; fila < y + alto; fila++) {
+        // Columna izquierda del rectángulo.
+        encender_pixel(x, fila, color);
+        // Columna derecha del rectángulo (x + ancho - 1).
+        encender_pixel(x + ancho - 1U, fila, color);
+    }
+    // Los píxeles que caen fuera del tablero los ignora encender_pixel, así que un rectángulo que se sale no escribe fuera del arreglo.
+}
+
+// Dibuja un dígito de 3x5 con la esquina superior izquierda en (x, y). Solo enciende los píxeles que valen 1 en la fuente.
+void dibujar_digito(uint32_t x, uint32_t y, uint32_t digito, uint32_t color)
+{
+    // Si el número no es un dígito de la fuente (0 a 9), no se dibuja nada.
+    if (digito >= FUENTE_CANTIDAD_DIGITOS) {
+        return;
+    }
+    // Recorre las filas del dígito, de arriba abajo.
+    for (uint32_t fila = 0U; fila < FUENTE_ALTO; fila++) {
+        // Recorre las columnas del dígito, de izquierda a derecha.
+        for (uint32_t columna = 0U; columna < FUENTE_ANCHO; columna++) {
+            // El desplazamiento toma el bit de esta columna: la columna 0 (izquierda) es el bit 2 y la columna 2 (derecha) es el bit 0.
+            // Se desplaza el byte de la fila y con & 1U se mira solo ese bit. Si vale 1, el píxel se enciende.
+            if (((fuente_digitos[digito][fila] >> (FUENTE_ANCHO - 1U - columna)) & 1U) == 1U) {
+                // Enciende el píxel del dígito en su posición dentro del tablero.
+                encender_pixel(x + columna, y + fila, color);
+            }
+        }
+    }
+}
+
+// Dibuja un número con NUMERO_CANTIDAD_DIGITOS dígitos, con la esquina superior izquierda en (x, y). Los ceros a la izquierda se dibujan.
+void dibujar_numero(uint32_t x, uint32_t y, uint32_t valor, uint32_t color)
+{
+    // Recorre las posiciones de los dígitos de derecha a izquierda: la posición 4 es la de unidades y la posición 1 la de millares.
+    for (uint32_t posicion = NUMERO_CANTIDAD_DIGITOS; posicion > 0U; posicion--) {
+        // Dígito de esta posición: el resto de dividir el valor entre 10 (el último dígito que queda).
+        uint32_t digito = valor % 10U;
+        // Quita el último dígito del valor para que el siguiente paso tome el anterior.
+        valor = valor / 10U;
+        // Dibuja el dígito en su columna: el desplazamiento es (posicion - 1) veces el ancho de un dígito más la separación. Las unidades (posicion 4) quedan a la derecha, con desplazamiento 3 * 4 = 12.
+        dibujar_digito(x + (posicion - 1U) * (FUENTE_ANCHO + FUENTE_SEPARACION), y, digito, color);
+    }
+}
+```
+
+Lo que cambió respecto al Paso 6 es `dibujar_numero`, al final del archivo. `borrar_pantalla`, `dibujar_rectangulo`, `dibujar_digito` y la fuente se explican en el Paso 6.
+- `for (uint32_t posicion = NUMERO_CANTIDAD_DIGITOS; posicion > 0U; posicion--)`: recorre las posiciones de 4 a 1. La 4 es la de las unidades (a la derecha) y la 1 la de los millares (a la izquierda). Se cuenta hacia abajo porque el primer dígito que se saca de un número es el de las unidades. Cuenta hasta `> 0U` (y no `>= 0U`) porque una variable sin signo nunca es negativa.
+- `uint32_t digito = valor % 10U;`: el resto de dividir entre 10 es el último dígito del valor.
+- `valor = valor / 10U;`: la división entera descarta ese dígito para que la vuelta siguiente saque el anterior. `valor` es una copia local (el parámetro se pasa por valor), así que no cambia nada fuera de la función.
+- `dibujar_digito(x + (posicion - 1U) * (FUENTE_ANCHO + FUENTE_SEPARACION), y, digito, color);`: dibuja el dígito en su columna. El desplazamiento es `(posicion - 1)` veces `3 + 1` columnas: la posición 1 no se corre y la 4 se corre 12 columnas.
+- La función no borra lo que haya debajo, porque solo llama a `dibujar_digito`, que enciende solo sus píxeles. Por eso `terminar_partida` borra la pantalla antes.
+
+`src/snake.c`
+
+```c
+#include "snake.h"
+#include "graficos.h"
+#include "botones.h"
+#include "system_config.h"
+#include "aleatorio.h"
+
+// Cuerpo de la serpiente: arreglo circular. Los segmentos van desde cola hasta cabeza, y son longitud en total.
+static Posicion cuerpo[CAPACIDAD_CUERPO];
+// Índice dentro de cuerpo del segmento de la cabeza (el más nuevo).
+static uint32_t cabeza = 0U;
+// Índice dentro de cuerpo del segmento de la cola (el más viejo, el primero que se apaga al moverse).
+static uint32_t cola = 0U;
+// Cantidad de segmentos de la serpiente. Crece 1 por cada manzana comida y baja 2 por cada veneno comido.
+static uint32_t longitud = 0U;
+// Dirección del último paso hecho: uno de los DIRECCION_*. Empieza en derecha.
+static uint32_t direccion_actual = DIRECCION_DERECHA;
+// Dirección pedida por el último botón de A a D presionado: uno de los DIRECCION_*. Empieza en quieto.
+static uint32_t direccion_pedida = DIRECCION_QUIETO;
+// Vale 0 hasta que se presiona un botón de dirección válido. Mientras vale 0, la serpiente está quieta.
+static uint32_t en_marcha = 0U;
+// Posición de la manzana roja en el tablero.
+static Posicion manzana;
+// Puntos acumulados: sube 1 por cada manzana comida y baja 2 por cada veneno comido (sin bajar de 0).
+static uint32_t puntaje = 0U;
+// Vale 1 cuando la serpiente chocó o llenó el tablero. Lo pone terminar_partida, que además muestra el puntaje. Al terminar, la serpiente se queda quieta hasta reiniciar.
+static uint32_t juego_terminado = 0U;
+// Posición del veneno azul en el tablero. Solo es válida mientras veneno_visible vale 1.
+static Posicion veneno;
+// Vale 1 mientras el veneno está en el tablero; vale 0 cuando está escondido, esperando a reaparecer.
+static uint32_t veneno_visible = 0U;
+// Pasos del juego que faltan para que el veneno desaparezca (si está visible) o aparezca (si no está visible).
+static uint32_t pasos_veneno = 0U;
+// Vale 1 cuando la manzana tiene una posición válida. Sirve para no comparar con una posición vieja al buscar celda libre.
+static uint32_t manzana_colocada = 0U;
+// Vale 1 después de sembrar el generador aleatorio con el primer botón de dirección. Solo se siembra una vez por arranque.
+static uint32_t aleatorio_sembrado = 0U;
+
+// Devuelve la dirección contraria a la recibida: arriba con abajo, y derecha con izquierda.
+static uint32_t direccion_opuesta(uint32_t direccion)
+{
+    // Si la dirección es arriba, la contraria es abajo.
+    if (direccion == DIRECCION_ARRIBA) {
+        return DIRECCION_ABAJO;
+    }
+    // Si la dirección es abajo, la contraria es arriba.
+    if (direccion == DIRECCION_ABAJO) {
+        return DIRECCION_ARRIBA;
+    }
+    // Si la dirección es derecha, la contraria es izquierda.
+    if (direccion == DIRECCION_DERECHA) {
+        return DIRECCION_IZQUIERDA;
+    }
+    // Si la dirección es izquierda, la contraria es derecha.
+    if (direccion == DIRECCION_IZQUIERDA) {
+        return DIRECCION_DERECHA;
+    }
+    // Sin dirección (quieto) no hay contraria: se devuelve quieto.
+    return DIRECCION_QUIETO;
+}
+
+// Devuelve 1 si algún segmento del cuerpo está en la posición (x, y), y 0 si ninguno está.
+static uint32_t celda_ocupada(uint32_t x, uint32_t y)
+{
+    // Se recorren los segmentos desde la cola: son longitud segmentos en total.
+    for (uint32_t i = 0U; i < longitud; i++) {
+        // Índice real del segmento i dentro del arreglo circular: la vuelta al principio la hace el módulo.
+        uint32_t indice = (cola + i) % CAPACIDAD_CUERPO;
+        // Si el segmento está en la posición buscada, la celda está ocupada.
+        if (cuerpo[indice].x == x && cuerpo[indice].y == y) {
+            return 1U;
+        }
+    }
+    // Ningún segmento está en esa posición: la celda está libre.
+    return 0U;
+}
+
+// Devuelve 1 si la celda (x, y) está libre: sin cuerpo, sin manzana y sin veneno visible. Si no, devuelve 0.
+static uint32_t celda_libre(uint32_t x, uint32_t y)
+{
+    // Si algún segmento del cuerpo está en la celda, no está libre.
+    if (celda_ocupada(x, y) == 1U) {
+        return 0U;
+    }
+    // Si la manzana tiene posición válida y está en la celda, no está libre.
+    if (manzana_colocada == 1U && manzana.x == x && manzana.y == y) {
+        return 0U;
+    }
+    // Si el veneno está visible y está en la celda, no está libre.
+    if (veneno_visible == 1U && veneno.x == x && veneno.y == y) {
+        return 0U;
+    }
+    // Ninguna de las tres cosas está en la celda: está libre.
+    return 1U;
+}
+
+// Busca una celda libre al azar y guarda su posición en *destino. Devuelve 1 si la encontró y 0 si el tablero está lleno.
+// Empieza en una celda que sale del LFSR y, si está ocupada, pasa a la siguiente (circular).
+// Aviso: prueba como máximo CAPACIDAD_CUERPO celdas y cada prueba recorre el cuerpo. Solo tarda mucho si el tablero está casi lleno.
+static uint32_t buscar_celda_libre(Posicion *destino)
+{
+    // Celda de partida: un número aleatorio cortado al tamaño del tablero.
+    uint32_t celda_inicial = siguiente_aleatorio() % CAPACIDAD_CUERPO;
+    // Se prueban todas las celdas del tablero una sola vez, empezando por la celda de partida.
+    for (uint32_t i = 0U; i < CAPACIDAD_CUERPO; i++) {
+        // Celda que se prueba en esta vuelta: si pasa del final del tablero, vuelve al principio.
+        uint32_t celda = (celda_inicial + i) % CAPACIDAD_CUERPO;
+        // Columna x de la celda: el resto de dividir la celda entre el ancho del tablero.
+        uint32_t x = celda % PANEL_ANCHO;
+        // Fila y de la celda: el cociente de dividir la celda entre el ancho del tablero.
+        uint32_t y = celda / PANEL_ANCHO;
+        // Si la celda está libre, se guarda su posición en el destino.
+        if (celda_libre(x, y) == 1U) {
+            destino->x = x;
+            destino->y = y;
+            return 1U;
+        }
+    }
+    // Ninguna celda está libre: el tablero está lleno.
+    return 0U;
+}
+
+// Termina la partida: marca juego_terminado, borra el tablero y muestra el puntaje en blanco, centrado en el panel.
+static void terminar_partida(void)
+{
+    // Marca la partida como terminada: a partir de aquí avanzar_serpiente no mueve la serpiente.
+    juego_terminado = 1U;
+    // Borra todo el tablero para que solo quede el puntaje.
+    borrar_pantalla();
+    // Dibuja el puntaje centrado en blanco: la esquina izquierda va en (ancho del panel - ancho del número) / 2 y la superior en (alto del panel - alto de la fuente) / 2.
+    dibujar_numero((PANEL_ANCHO - NUMERO_ANCHO) / 2U, (PANEL_ALTO - FUENTE_ALTO) / 2U, puntaje, COLOR_BLANCO);
+}
+
+// Pone la manzana en una celda libre y la enciende en rojo. Si no hay celda libre, la serpiente llenó el tablero y la partida termina.
+static void colocar_manzana(void)
+{
+    // Si se encontró una celda libre, la manzana va ahí.
+    if (buscar_celda_libre(&manzana) == 1U) {
+        // La manzana ya tiene posición válida.
+        manzana_colocada = 1U;
+        // Se enciende la manzana en rojo.
+        encender_pixel(manzana.x, manzana.y, COLOR_ROJO);
+    } else {
+        // Ninguna celda está libre: la serpiente llena el tablero, así que la partida termina y se muestra el puntaje.
+        terminar_partida();
+    }
+}
+
+// Pone el veneno en una celda libre y lo enciende en azul. Si no hay celda libre, el veneno no aparece esta vez.
+static void colocar_veneno(void)
+{
+    // Si se encontró una celda libre, el veneno va ahí.
+    if (buscar_celda_libre(&veneno) == 1U) {
+        // El veneno está visible durante VENENO_DURACION_PASOS pasos del juego.
+        veneno_visible = 1U;
+        pasos_veneno = VENENO_DURACION_PASOS;
+        // Se enciende el veneno en azul.
+        encender_pixel(veneno.x, veneno.y, COLOR_AZUL);
+    } else {
+        // No hay celda libre: el veneno no aparece y se vuelve a intentar después de VENENO_ESPERA_PASOS pasos.
+        veneno_visible = 0U;
+        pasos_veneno = VENENO_ESPERA_PASOS;
+    }
+}
+
+void iniciar_juego(void)
+{
+    // Se borra la pantalla para quitar lo que quedó de la partida anterior.
+    borrar_pantalla();
+    // La serpiente empieza con LONGITUD_INICIAL segmentos.
+    longitud = LONGITUD_INICIAL;
+    // La cola es el primer segmento del arreglo: índice 0.
+    cola = 0U;
+    // La cabeza es el último de los segmentos iniciales: índice LONGITUD_INICIAL - 1.
+    cabeza = LONGITUD_INICIAL - 1U;
+    // Columna del centro del panel. Los segmentos se ponen a su izquierda y en el centro.
+    uint32_t x = PANEL_ANCHO / 2U;
+    // Fila del centro del panel.
+    uint32_t y = PANEL_ALTO / 2U;
+    // Segmento 0 (cola): dos columnas a la izquierda del centro.
+    cuerpo[0].x = x - 2U;
+    cuerpo[0].y = y;
+    // Segmento 1: una columna a la izquierda del centro.
+    cuerpo[1].x = x - 1U;
+    cuerpo[1].y = y;
+    // Segmento 2 (cabeza): el centro.
+    cuerpo[2].x = x;
+    cuerpo[2].y = y;
+    // Se encienden los tres segmentos en verde.
+    encender_pixel(x - 2U, y, COLOR_VERDE);
+    encender_pixel(x - 1U, y, COLOR_VERDE);
+    encender_pixel(x, y, COLOR_VERDE);
+    // La serpiente mira a la derecha, pero no se mueve hasta que se presione un botón válido.
+    direccion_actual = DIRECCION_DERECHA;
+    // No hay dirección pedida todavía.
+    direccion_pedida = DIRECCION_QUIETO;
+    // La serpiente está quieta hasta el primer botón válido.
+    en_marcha = 0U;
+    // El puntaje vuelve a 0.
+    puntaje = 0U;
+    // La partida está en curso.
+    juego_terminado = 0U;
+    // El veneno no está en el tablero al empezar. Su primera aparición ocurre tras VENENO_ESPERA_PASOS pasos.
+    veneno_visible = 0U;
+    pasos_veneno = VENENO_ESPERA_PASOS;
+    // La manzana todavía no tiene posición válida: así colocar_manzana no compara con la posición de la partida anterior.
+    manzana_colocada = 0U;
+    // Se coloca la primera manzana en una celda libre.
+    colocar_manzana();
+}
+
+void pedir_direccion(uint32_t botones)
+{
+    // Si hay algún botón de A a D presionado y el generador todavía no se sembró, se siembra ahora, una sola vez por arranque.
+    // Se siembra aquí y no al vencer el temporizador: en el instante en que se presiona el botón, los milisegundos son distintos en cada arranque;
+    // al vencer el temporizador siempre serían múltiplos de 200 más una constante.
+    if (((botones & (BOTON_A | BOTON_B | BOTON_C | BOTON_D)) != 0U) && (aleatorio_sembrado == 0U)) {
+        // La semilla son los milisegundos desde el arranque, en el instante de la primera pulsación.
+        sembrar_aleatorio(obtener_milisegundos());
+        // Se marca que ya se sembró para no volver a sembrar en esta partida ni en las siguientes.
+        aleatorio_sembrado = 1U;
+    }
+    // Si el botón A está presionado, la dirección pedida es arriba.
+    if ((botones & BOTON_A) != 0U) {
+        direccion_pedida = DIRECCION_ARRIBA;
+    }
+    // Si el botón B está presionado, la dirección pedida es derecha.
+    if ((botones & BOTON_B) != 0U) {
+        direccion_pedida = DIRECCION_DERECHA;
+    }
+    // Si el botón C está presionado, la dirección pedida es abajo.
+    if ((botones & BOTON_C) != 0U) {
+        direccion_pedida = DIRECCION_ABAJO;
+    }
+    // Si el botón D está presionado, la dirección pedida es izquierda.
+    if ((botones & BOTON_D) != 0U) {
+        direccion_pedida = DIRECCION_IZQUIERDA;
+    }
+}
+
+void avanzar_serpiente(void)
+{
+    // Paso 1: si la partida terminó, no se hace nada: la serpiente queda congelada.
+    if (juego_terminado == 1U) {
+        return;
+    }
+    // Paso 2: si se pidió una dirección que no es la opuesta a la actual, se cambia la dirección.
+    // La opuesta se ignora para que la serpiente no se vuelva sobre sí misma.
+    if (direccion_pedida != DIRECCION_QUIETO && direccion_pedida != direccion_opuesta(direccion_actual)) {
+        // La dirección del último paso pasa a ser la pedida.
+        direccion_actual = direccion_pedida;
+        // Con una dirección válida, la serpiente empieza a moverse.
+        en_marcha = 1U;
+    }
+    // Paso 3: antes del primer botón válido, la serpiente sigue quieta.
+    if (en_marcha == 0U) {
+        return;
+    }
+
+    // Paso 4: se calcula la cabeza nueva, un paso desde la cabeza actual en la dirección actual.
+    // La cabeza actual es el segmento del índice cabeza.
+    uint32_t nueva_x = cuerpo[cabeza].x;
+    uint32_t nueva_y = cuerpo[cabeza].y;
+    // Arriba: y disminuye. Si y ya es 0 (primera fila), la cabeza saldría del tablero y la partida termina.
+    if (direccion_actual == DIRECCION_ARRIBA) {
+        if (nueva_y == 0U) {
+            terminar_partida();
+            return;
+        }
+        nueva_y = nueva_y - 1U;
+    }
+    // Abajo: y aumenta. Si y ya es la última fila, la partida termina.
+    if (direccion_actual == DIRECCION_ABAJO) {
+        if (nueva_y == PANEL_ALTO - 1U) {
+            terminar_partida();
+            return;
+        }
+        nueva_y = nueva_y + 1U;
+    }
+    // Izquierda: x disminuye. Si x ya es 0 (primera columna), la partida termina.
+    if (direccion_actual == DIRECCION_IZQUIERDA) {
+        if (nueva_x == 0U) {
+            terminar_partida();
+            return;
+        }
+        nueva_x = nueva_x - 1U;
+    }
+    // Derecha: x aumenta. Si x ya es la última columna, la partida termina.
+    if (direccion_actual == DIRECCION_DERECHA) {
+        if (nueva_x == PANEL_ANCHO - 1U) {
+            terminar_partida();
+            return;
+        }
+        nueva_x = nueva_x + 1U;
+    }
+
+    // Paso 5: si la cabeza nueva cae sobre el cuerpo, la partida termina. Esto incluye la cola,
+    // porque la cola todavía no se movió en este paso.
+    if (celda_ocupada(nueva_x, nueva_y) == 1U) {
+        terminar_partida();
+        return;
+    }
+
+    // Paso 5b: se mira si la cabeza nueva cae sobre el veneno visible. Se calcula antes de mover la cabeza.
+    uint32_t come_veneno = (veneno_visible == 1U && nueva_x == veneno.x && nueva_y == veneno.y);
+    // Si se come veneno con VENENO_SEGMENTOS_PERDIDOS segmentos o menos, la serpiente muere: la partida termina y la serpiente no se mueve.
+    if (come_veneno == 1U && longitud <= VENENO_SEGMENTOS_PERDIDOS) {
+        terminar_partida();
+        return;
+    }
+
+    // Paso 6: la cabeza avanza una posición en el arreglo circular y guarda la posición nueva.
+    cabeza = (cabeza + 1U) % CAPACIDAD_CUERPO;
+    cuerpo[cabeza].x = nueva_x;
+    cuerpo[cabeza].y = nueva_y;
+    // Se enciende el píxel de la nueva cabeza en verde.
+    encender_pixel(nueva_x, nueva_y, COLOR_VERDE);
+
+    // Paso 7: si la cabeza llegó a la manzana, la serpiente crece: la cola no se mueve, suma 1 segmento
+    // y 1 punto, y aparece otra manzana.
+    if (nueva_x == manzana.x && nueva_y == manzana.y) {
+        // Un segmento más.
+        longitud++;
+        // Un punto más.
+        puntaje++;
+        // Nueva manzana en una celda libre.
+        colocar_manzana();
+    } else {
+        // Si no hubo manzana, la cola se mueve: se apaga el píxel de la cola en negro para que no quede un segmento viejo.
+        encender_pixel(cuerpo[cola].x, cuerpo[cola].y, COLOR_NEGRO);
+        // El índice de la cola avanza una posición en el arreglo circular.
+        cola = (cola + 1U) % CAPACIDAD_CUERPO;
+        // Si además se comió veneno, la serpiente pierde VENENO_SEGMENTOS_PERDIDOS segmentos más desde la cola.
+        if (come_veneno == 1U) {
+            // Cada segmento perdido: se apaga su píxel, la cola avanza y la longitud baja 1.
+            for (uint32_t i = 0U; i < VENENO_SEGMENTOS_PERDIDOS; i++) {
+                encender_pixel(cuerpo[cola].x, cuerpo[cola].y, COLOR_NEGRO);
+                cola = (cola + 1U) % CAPACIDAD_CUERPO;
+                longitud--;
+            }
+            // El puntaje baja VENENO_PUNTOS_PERDIDOS, pero nunca por debajo de 0.
+            if (puntaje >= VENENO_PUNTOS_PERDIDOS) {
+                puntaje = puntaje - VENENO_PUNTOS_PERDIDOS;
+            } else {
+                puntaje = 0U;
+            }
+            // El veneno se consume: deja de estar visible y empieza la espera para reaparecer.
+            // Su píxel queda cubierto por la cabeza verde, así que no hace falta apagarlo.
+            veneno_visible = 0U;
+            pasos_veneno = VENENO_ESPERA_PASOS;
+        }
+    }
+
+    // Paso 8: el tiempo del veneno avanza un paso. Solo si la partida sigue y en este paso no se comió veneno.
+    if (juego_terminado == 0U && come_veneno == 0U) {
+        // El contador no baja de 0: solo se resta si todavía vale más de 0.
+        if (pasos_veneno > 0U) {
+            pasos_veneno--;
+        }
+        // Si el contador llegó a 0, toca cambiar el estado del veneno.
+        if (pasos_veneno == 0U) {
+            // Si el veneno estaba visible, desaparece: se apaga su píxel y empieza la espera para reaparecer.
+            if (veneno_visible == 1U) {
+                encender_pixel(veneno.x, veneno.y, COLOR_NEGRO);
+                veneno_visible = 0U;
+                pasos_veneno = VENENO_ESPERA_PASOS;
+            } else {
+                // Si el veneno estaba escondido, reaparece en una celda libre.
+                colocar_veneno();
+            }
+        }
+    }
+}
+```
+
+Lo que cambió respecto al Paso 9:
+
+1. **Comentario de `juego_terminado`:** ahora dice que lo pone `terminar_partida`, que además muestra el puntaje.
+2. **Función nueva `terminar_partida`** (definida justo antes de `colocar_manzana`, que es su primer uso; en C una función debe estar declarada antes de usarse):
+   - `static`: solo la usa `snake.c`.
+   - `juego_terminado = 1U;`: lo que ya se hacía en cada sitio; a partir de aquí `avanzar_serpiente` no mueve la serpiente.
+   - `borrar_pantalla();`: quita la serpiente, la manzana y el veneno (decisión 1a: solo se ve el puntaje).
+   - `dibujar_numero((PANEL_ANCHO - NUMERO_ANCHO) / 2U, (PANEL_ALTO - FUENTE_ALTO) / 2U, puntaje, COLOR_BLANCO);`: dibuja el puntaje en blanco, con la esquina superior izquierda en (8, 5). Al estar hecho con constantes, en el Paso 11 (32×32) se centra solo.
+3. **Los 7 sitios** que antes tenían `juego_terminado = 1U;` ahora llaman a `terminar_partida();`:
+   - En `avanzar_serpiente` (6): salir por arriba, por abajo, por la izquierda y por la derecha; chocar con el cuerpo (incluida la cola); y comer veneno con `VENENO_SEGMENTOS_PERDIDOS` segmentos o menos.
+   - En `colocar_manzana` (1): no hay celda libre, la serpiente llenó el tablero.
+   - En los 6 de `avanzar_serpiente` se conserva el `return;`: tras el fin, la función no debe seguir moviendo ni dibujando. En `colocar_manzana` no hace falta: vuelve al paso 7 de `avanzar_serpiente`, que ya no dibuja nada más, y el paso 8 comprueba `juego_terminado == 0U`.
+4. **Qué puntaje se muestra:**
+   - En el tablero lleno, `puntaje++` se ejecuta antes de `colocar_manzana()`, así que se muestra el puntaje final.
+   - En el veneno mortal se muestra el puntaje que había antes de comerlo (la serpiente no se mueve).
+   - `iniciar_juego` pone `puntaje = 0U` y `juego_terminado = 0U` antes de colocar la primera manzana; por eso F funciona sin tocar `main.c`.
+
+Los demás cambios del archivo son comentarios; `main.c` y `snake.h` quedan como estaban.
+
+### Lo que el `revisor` comprobó
+- Compila con 0 advertencias y el código cumple la especificación (4 dígitos, ceros a la izquierda, unidades a la derecha, blanco, centrado en (8, 5), 7 sitios reemplazados, `main.c` sin cambios).
+- Con un programa de PC (fuera del repositorio): 0 → `0000`, 7 → `0007`, 42 → `0042`, 509 → `0509`, 12345 → `2345`, y las columnas de los dígitos 8, 12, 16 y 20 con x = 8.
+- Casos de tablero lleno y veneno mortal revisados en el código (ver arriba).
+
+### Límites conocidos (no son errores)
+- **Posible parpadeo al terminar:** entre `borrar_pantalla()` y el dibujo de los dígitos, la interrupción de refresco podría mostrar un cuadro en negro de ~1 ms. El `revisor` no lo considera un error; no se midió.
+- **Puntaje de más de 4 dígitos:** muestra solo los últimos 4. No ocurre con 32×16 ni con 32×32.
+- **Ganar y morir se ven igual** (decisión 7a): no hay una pantalla distinta para el tablero lleno.
+- **Tablero lleno, no probado en la placa:** es casi imposible de lograr; está revisado por el código y por la simulación del `revisor` del Paso 9.
+
+### Modificaciones y correcciones
+- El agente principal dijo primero que eran 8 sitios con `juego_terminado = 1U;` (7 en `avanzar_serpiente`). El `programador` lo corrigió al contarlos en el archivo: son 7 (6 en `avanzar_serpiente` y 1 en `colocar_manzana`). Lo confirmó el `git diff`.
+- Ningún cambio del `revisor`.
+
+### Decisiones tomadas
+| Pregunta | Opciones | Decisión de Daniela |
+|---|---|---|
+| Cómo se ve el fin de juego | Borrar todo y solo el puntaje; serpiente congelada con el número encima; alternar tablero y puntaje cada ~1 s | Borrar todo y solo el puntaje |
+| Color del número | Blanco, amarillo u otro | Blanco |
+| Posición | Centrado u otra | Centrado en horizontal y vertical |
+| Cómo se escribe el puntaje | Sin ceros a la izquierda o siempre con ceros | Siempre con ceros a la izquierda (`0000`) |
+| Cantidad de dígitos | 4 desde ahora o 3 ahora y cambiar en el Paso 11 | 4 desde ahora |
+| Qué hace F al terminar | Reinicia al instante o se ignora ~1 s | Reinicia al instante |
+| Ganar frente a morir | Igual o color distinto | Igual |
+| Dónde va el código del número | `dibujar_numero` genérica en `graficos.c` o todo en `snake.c` | `dibujar_numero` en `graficos.c` |
+| Dónde se dispara la pantalla de fin | Función `terminar_partida()` llamada en los 7 sitios, o un solo chequeo al final de `avanzar_serpiente` | `terminar_partida()` en los 7 sitios |
+
+Pedido aparte de Daniela: «baja la intensidad de la pantalla en general». El agente principal le propuso tres formas (una segunda interrupción de TIM3 que apague OE a mitad del milisegundo, una espera activa en `dibujar_fase`, o apagar el panel 1 de cada N milisegundos) y Daniela decidió **dejar el brillo como está**. No se cambió nada del brillo.
+
+### Cómo se probó
+- `make clean && make`: 0 advertencias; `arm-none-eabi-size`: `text 4954`, `data 8`, `bss 1608`.
+- Simulación del `revisor` (ver arriba).
+- `make flash`: `device id = 0x10006421`, `flash size = 512 kbytes`, `Programming Finished`, `Verified OK`, `Resetting Target`.
+- En la placa (2026-11-19): Daniela probó y confirmó «se ve bien» (el puntaje se ve correcto y centrado). No se detalló prueba por prueba (cada causa de fin de partida, ni la función de F en la pantalla de puntaje).
+
+### Errores encontrados y cómo se resolvieron
+- Ninguno en la compilación ni en la placa.
+- La cuenta de sitios (8 en vez de 7) del agente principal, corregida por el `programador` (ver arriba).
+
+### Preguntas de autoevaluación
+1. ¿Cómo saca `dibujar_numero` los dígitos de un valor y por qué aparecen los ceros a la izquierda?
+   Con `valor % 10` toma el último dígito y con `valor / 10` lo descarta, repitiendo 4 veces. Cuando `valor` llega a 0, `0 % 10` da 0 y se dibuja un «0», así que los ceros a la izquierda salen solos.
+2. ¿Por qué `NUMERO_ANCHO` vale 15 y por qué el número empieza en x = 8?
+   4 dígitos de 3 columnas son 12, más 3 separaciones de 1 columna (entre 4 dígitos hay 3 huecos): 15. Para centrar se resta del ancho del panel y se divide entre 2: (32 − 15) / 2 = 8 (8,5 redondeado hacia abajo).
+3. ¿Por qué se creó `terminar_partida` en vez de escribir `juego_terminado = 1U;` y dibujar el puntaje en cada sitio?
+   Porque la partida termina por 7 causas distintas y todas deben hacer lo mismo (marcar el fin, borrar y dibujar el puntaje). Con una función, el código está en un solo lugar y cada sitio queda con una línea.
+4. ¿Qué se vería con un puntaje de 12345 y por qué?
+   `2345`, porque el bucle solo da 4 vueltas y por eso solo saca los 4 últimos dígitos. Con este tablero no ocurre (el máximo es ~509).
+5. ¿Por qué `terminar_partida` borra la pantalla antes de dibujar el número?
+   Porque `dibujar_numero` (como `dibujar_digito`) solo enciende píxeles y no apaga los demás. Sin `borrar_pantalla`, el número quedaría encima de la serpiente y de la manzana (la opción 1b, que Daniela no eligió).
 
 ## Resumen de sustentación
 Al final del proyecto: mapa de memoria, tabla de pines, mapeo de píxeles, cálculo del reloj y de los timers, y diagrama del flujo del juego.
