@@ -1,0 +1,18 @@
+<section id="hub75">
+<div class="head"><p class="eyebrow c-red">FASE 2 · PANTALLA</p><h2>Panel HUB75 con escaneo 1/4</h2></div><div class="row" style="gap:56px;align-items:flex-start"><div style="width:760px"><table style="font-size:32px;color:#3E4A5E">
+<tr><th style="width:22%">Señal</th><th style="width:22%">Pin</th><th style="width:34%">Señal</th><th>Pin</th></tr>
+<tr><td>R1</td><td>PC0</td><td>OE</td><td>PC6</td></tr>
+<tr><td>G1</td><td>PC1</td><td>LAT</td><td>PC7</td></tr>
+<tr><td>B1</td><td>PC2</td><td>CLK</td><td>PC8</td></tr>
+<tr><td>R2</td><td>PC3</td><td>A</td><td>PC10</td></tr>
+<tr><td>G2</td><td>PC4</td><td>B</td><td>PC11</td></tr>
+<tr><td>B2</td><td>PC5</td><td></td><td></td></tr>
+</table></div><div class="col" style="flex:1;gap:24px"><table style="font-size:32px;color:#3E4A5E">
+<tr><th style="width:34%">Fase</th><th>Filas encendidas</th></tr>
+<tr><td>0</td><td>0, 4, 8, 12</td></tr>
+<tr><td>1</td><td>1, 5, 9, 13</td></tr>
+<tr><td>2</td><td>2, 6, 10, 14</td></tr>
+<tr><td>3</td><td>3, 7, 11, 15</td></tr>
+</table><div class="card" style="padding:28px"><p class="small"><b>64 bits por fase</b>, en 4 bloques de 16. Cada bit lleva 6 datos: R1 G1 B1 (mitad de arriba) y R2 G2 B2 (mitad de abajo).</p></div></div></div>
+<aside>El panel de 32x16 se escanea en 4 fases; A y B eligen la fase y en cada una se encienden 4 filas, por eso solo 1/4 de los LED está encendido a la vez. Para cada fase se desplazan 64 bits con CLK; cada bit trae los seis colores de dos filas (y y y+8). Pines en el puerto C, alimentación externa. Los pines C y D del HUB75 no se usan en escaneo 1/4.</aside>
+</section>

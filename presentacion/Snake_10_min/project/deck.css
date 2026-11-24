@@ -1,0 +1,40 @@
+
+body{font-family:'Inter',Arial,sans-serif;color:#3E4A5E;font-size:32px}
+section{counter-increment:page;background:#FBFAF6;padding:128px 128px 160px;display:flex;flex-direction:column;gap:36px;font-family:'Inter',Arial,sans-serif;color:#3E4A5E}
+section::before{content:"Snake · NUCLEO-F446RE";position:absolute;left:128px;bottom:64px;font-size:24px;color:#5B6470}
+section::after{content:counter(page);position:absolute;right:128px;bottom:64px;font-size:24px;color:#5B6470}
+section.plain::before{content:none}
+section.plain::after{content:none}
+h1{font-family:'Space Grotesk',Arial,sans-serif;font-size:120px;font-weight:700;line-height:1.02;color:#14213D;margin:0}
+h2{font-family:'Space Grotesk',Arial,sans-serif;font-size:72px;font-weight:700;line-height:1.05;color:#14213D;margin:0}
+h3{font-family:'Space Grotesk',Arial,sans-serif;font-size:44px;font-weight:700;line-height:1.1;color:#14213D;margin:0}
+p{margin:0}
+.head{display:flex;flex-direction:column;gap:14px}
+.eyebrow{font-size:30px;font-weight:600;letter-spacing:3px;margin:0}
+.c-blue{color:#2845D6}
+.c-red{color:#C42B3E}
+.c-green{color:#0E7A42}
+.c-ink{color:#14213D}
+.lead{font-size:44px;line-height:1.3;color:#14213D}
+.body{font-size:36px;line-height:1.35;color:#3E4A5E}
+.small{font-size:32px;line-height:1.35;color:#3E4A5E}
+.num{font-family:'Space Grotesk',Arial,sans-serif;font-size:120px;font-weight:700;line-height:1}
+.num64{font-family:'Space Grotesk',Arial,sans-serif;font-size:72px;font-weight:700;line-height:1.05;color:#14213D}
+.row{display:flex;flex-direction:row;gap:28px}
+.col{display:flex;flex-direction:column}
+.card{background:#FFFEFA;border:2px solid #E4E2D8;border-radius:24px;padding:36px;display:flex;flex-direction:column;gap:12px}
+.codebox{background:#EFEEE6;border-radius:20px;padding:34px 44px;border-left:12px solid #3D63F5}
+.code{font-family:'JetBrains Mono','Courier New',monospace;font-size:30px;line-height:1.5;color:#14213D;margin:0}
+.badge{width:72px;height:72px;border-radius:36px;background:#14213D;display:flex;align-items:center;justify-content:center}
+.badge p{font-size:36px;font-weight:600;color:#FBFAF6;margin:0}
+.step{display:flex;flex-direction:row;align-items:center;gap:20px;background:#FFFEFA;border:2px solid #E4E2D8;border-radius:20px;padding:12px 24px}
+.stepcard{flex:1;display:flex;flex-direction:column;gap:14px;background:#FFFEFA;border:2px solid #E4E2D8;border-radius:20px;padding:24px}
+.layer{display:flex;flex-direction:row;align-items:center;gap:28px;background:#FFFEFA;border:2px solid #E4E2D8;border-radius:20px;padding:22px 28px}
+.layerlabel{width:360px;font-size:36px;font-weight:600;color:#14213D}
+.mod{background:#EFEEE6;border-radius:14px;padding:14px 24px;font-family:'JetBrains Mono','Courier New',monospace;font-size:32px;font-weight:500;color:#14213D}
+.matrix{display:grid;grid-template-columns:repeat(8,64px);grid-template-rows:repeat(8,64px);gap:10px}
+.memcol{display:flex;flex-direction:column;gap:8px;width:440px}
+.memhead{font-size:30px;font-weight:600;color:#14213D;margin:0 0 6px 0}
+.roomy .small{font-size:36px}
+.roomy .body{font-size:40px}
+table{border-collapse:collapse}

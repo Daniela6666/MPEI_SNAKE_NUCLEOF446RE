@@ -1,0 +1,74 @@
+{
+ "v": 5,
+ "createdOnFiles": {
+  "v": 1,
+  "at": "2026-11-23T16:30:00Z"
+ },
+ "lists": "css",
+ "format": {
+  "v": 1,
+  "shared": [
+   "project/deck.css"
+  ]
+ },
+ "title": "Snake en panel P10 RGB — NUCLEO-F446RE_10_min",
+ "cover": "cover",
+ "order": [
+  "cover",
+  "ruta",
+  "juego",
+  "registros",
+  "arquitectura",
+  "makefile",
+  "linker",
+  "crt0",
+  "reloj",
+  "hub75",
+  "fase",
+  "bug",
+  "tim3",
+  "framebuffer",
+  "serpiente",
+  "lfsr",
+  "veneno",
+  "mediciones",
+  "cierre"
+ ],
+ "sections": {
+  "s1": {
+   "description": "Presentación del juego, hardware y reglas del proyecto",
+   "start": "cover"
+  },
+  "s2": {
+   "description": "Base: Makefile, linker, arranque, reloj y botones",
+   "start": "makefile"
+  },
+  "s3": {
+   "description": "Pantalla: panel HUB75, refresco con TIM3 y gráficos",
+   "start": "hub75"
+  },
+  "s4": {
+   "description": "Juego: bucle, serpiente, aleatorios y veneno",
+   "start": "serpiente"
+  },
+  "s5": {
+   "description": "Pruebas, ampliación, IA y cierre",
+   "start": "mediciones"
+  }
+ },
+ "faces": {
+  "space-grotesk": {
+   "family": "Space Grotesk",
+   "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap"
+  },
+  "inter": {
+   "family": "Inter",
+   "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+  },
+  "jetbrains-mono": {
+   "family": "JetBrains Mono",
+   "href": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap"
+  }
+ },
+ "designSystems": []
+}
